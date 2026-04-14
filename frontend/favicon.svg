@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4a90c4;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#4ab87a;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background speech bubble - tight fit -->
+  <path d="M50 95 C20 95, 2 75, 2 50 C2 25, 20 5, 50 5 C80 5, 98 25, 98 50 C98 75, 80 95, 50 95 Z" fill="url(#logoGradient)" opacity="1"/>
+  
+  <!-- Brain detail (White for high contrast in tab) -->
+  <path d="M35 30 C28 30, 20 36, 20 46 C20 52, 23 57, 28 60 L28 64 L50 64 L50 30 Z" fill="white"/>
+  <path d="M65 30 C72 30, 80 36, 80 46 C80 52, 77 57, 72 60 L72 64 L50 64 L50 30 Z" fill="white" opacity="0.9"/>
+  
+  <!-- Wave detail -->
+  <path d="M15 75 Q30 65, 45 72 Q60 79, 75 69 Q85 62, 90 70" fill="none" stroke="white" stroke-width="6" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SafeSpace.ai | Mental Well-Being Companion</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <nav class="topbar">
+          <div class="brand-lockup">
+            <span class="brand-mark">C</span>
+            <div>
+              <p class="eyebrow">AI-powered emotion detection</p>
+              <h1>SafeSpace.ai</h1>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <span class="status-pill account-pill" id="authStateLabel">Guest mode</span>
+            <button class="ghost-button" id="demoFillButton" type="button">Try Demo Input</button>
+            <button class="ghost-button" id="openAuthButton" type="button">Sign In</button>
+            <button class="ghost-button hidden" id="logoutButton" type="button">Log Out</button>
+          </div>
+        </nav>
+
+        <section class="hero-grid">
+          <div class="hero-copy">
+            <p class="section-label">Detect. Understand. Support.</p>
+            <h2>
+              Feel. Track. Heal
+            </h2>
+            <p class="hero-text">
+              This interface combines written emotion check-ins, webcam-based expression sensing,
+              mood tracking, and personalized recommendations for breathing, books, music, and
+              lighter routines.
+            </p>
+
+            <div class="hero-badges">
+              <span>Text sentiment analysis</span>
+              <span>Facial expression capture</span>
+              <span>Mood history dashboard</span>
+              <span>Support recommendations</span>
+            </div>
+          </div>
+
+          <aside class="hero-card">
+            <p class="card-kicker">Live support snapshot</p>
+            <p class="small-note" id="accountSummary">
+              Sign in to save your check-ins, mood history, and personalized trend data securely.
+            </p>
+            <div class="hero-score">
+              <span id="heroMoodLabel">Balanced</span>
+              <strong id="heroStressScore">34%</strong>
+            </div>
+            <p id="heroSummary">
+              Your check-ins, tone, and facial cues are used to estimate how supported you may
+              need to feel right now.
+            </p>
+            <div class="hero-metrics">
+              <div>
+                <span>Sentiment</span>
+                <strong id="metricSentiment">Neutral</strong>
+              </div>
+              <div>
+                <span>Distress risk</span>
+                <strong id="metricRisk">Low</strong>
+              </div>
+            </div>
+          </aside>
+        </section>
+      </header>
+
+      <main class="content-grid">
+        <section class="panel input-panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">Step 1</p>
+              <h3>Emotion Check-In</h3>
+            </div>
+            <button class="icon-button" id="toggleCameraButton" type="button" aria-label="Open webcam">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M9 4h6l1.2 2H20a2 2 0 0 1 2 2v9a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V8a2 2 0 0 1 2-2h3.8L9 4Zm3 14a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Z"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <label class="textarea-label" for="emotionInput">How are you feeling today?</label>
+          <textarea
+            id="emotionInput"
+            rows="8"
+            placeholder="Example: I’ve been overwhelmed with deadlines, not sleeping well, and I feel anxious even when I try to relax."
+          ></textarea>
+
+          <div class="toolbar">
+            <div class="chip-row">
+              <button class="chip" type="button" data-text="I feel drained, anxious, and mentally overloaded today.">
+                Stressed
+              </button>
+              <button class="chip" type="button" data-text="I feel disconnected, tired, and low on motivation.">
+                Low Mood
+              </button>
+              <button class="chip" type="button" data-text="I feel okay overall, but I need help staying calm and focused.">
+                Need Focus
+              </button>
+            </div>
+            <button class="primary-button" id="analyzeButton" type="button">Analyze Well-Being</button>
+          </div>
+
+          <div class="emotion-spectrum-card">
+            <div class="emotion-spectrum-header">
+              <div>
+                <p class="section-label">AI-ML Emotion Tracker</p>
+                <h4>Emotion Spectrum Details</h4>
+              </div>
+              <span class="status-pill" id="emotionModelStatus">Text signal only</span>
+            </div>
+            <div class="emotion-spectrum-list" id="emotionSpectrumList"></div>
+            <p class="small-note" id="emotionSpectrumNote">
+              Shows probability and intensity for every modeled emotion in this prototype.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel webcam-panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">Step 2</p>
+              <h3>Facial Expression Check</h3>
+            </div>
+            <span class="status-pill" id="cameraStatus">Camera off</span>
+          </div>
+
+          <div class="camera-frame">
+            <video id="webcamVideo" autoplay muted playsinline></video>
+            <div class="camera-overlay">
+              <p id="cameraMessage">Turn on the camera so the frontend can estimate facial emotion cues.</p>
+              <button class="secondary-button" id="startCameraButton" type="button">Start Camera</button>
+            </div>
+          </div>
+
+          <div class="camera-actions">
+            <button class="ghost-button" id="captureButton" type="button">Capture Expression</button>
+            <button class="ghost-button" id="stopCameraButton" type="button">Stop Camera</button>
+          </div>
+
+          <div class="expression-result">
+            <span>Detected expression</span>
+            <strong id="expressionOutput">Waiting for capture</strong>
+            <p id="expressionHint">
+              Uses on-device browser access for webcam preview and can be connected to a face emotion
+              model such as face-api.js.
+            </p>
+          </div>
+
+          <div class="expression-ai-card">
+            <div class="expression-ai-header">
+              <div>
+                <p class="section-label">AI-ML Feature</p>
+                <h4>Expression Confidence Map</h4>
+              </div>
+              <span class="status-pill" id="confidenceSignalStatus">Awaiting capture</span>
+            </div>
+            <div class="expression-confidence-list" id="expressionConfidenceList"></div>
+            <div class="expression-reliability">
+              <span>Detection reliability</span>
+              <strong id="expressionReliabilityScore">0 / 100</strong>
+              <p id="expressionReliabilityNote">
+                Start camera and capture expression to evaluate confidence across all facial emotions.
+              </p>
+            </div>
+          </div>
+
+          <div class="quote-stack" aria-label="Motivational quotes">
+            <article class="quote-card">
+              <p class="quote-text">
+                "You may not control all the events that happen to you, but you can decide not to be reduced by them."
+              </p>
+              <p class="quote-author">Maya Angelou</p>
+            </article>
+            <article class="quote-card">
+              <p class="quote-text">
+                "When we are no longer able to change a situation, we are challenged to change ourselves."
+              </p>
+              <p class="quote-author">Viktor E. Frankl</p>
+            </article>
+            <article class="quote-card">
+              <p class="quote-text">
+                "There is hope, even when your brain tells you there isn't."
+              </p>
+              <p class="quote-author">John Green</p>
+            </article>
+            <article class="quote-card">
+              <p class="quote-text">
+                "It always seems impossible until it's done."
+              </p>
+              <p class="quote-author">Nelson Mandela</p>
+            </article>
+            <article class="quote-card">
+              <p class="quote-text">
+                "You must do the thing you think you cannot do."
+              </p>
+              <p class="quote-author">Eleanor Roosevelt</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel dashboard-panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">Step 3</p>
+              <h3>Sentiment & Risk Overview</h3>
+            </div>
+          </div>
+
+          <div class="analysis-cards">
+            <article class="stat-card">
+              <span>Dominant emotion</span>
+              <strong id="dominantEmotion">Neutral</strong>
+            </article>
+            <article class="stat-card">
+              <span>Sentiment score</span>
+              <strong id="sentimentScore">0 / 100</strong>
+            </article>
+            <article class="stat-card">
+              <span>Stress index</span>
+              <strong id="stressIndex">0 / 100</strong>
+            </article>
+            <article class="stat-card">
+              <span>Recommended support</span>
+              <strong id="supportMode">Gentle check-in</strong>
+            </article>
+          </div>
+
+          <div class="mood-chart-card">
+            <div class="mood-chart-header">
+              <div>
+                <span class="section-label">Mood Tracking</span>
+                <h4>Last 5 check-ins sentiment trend</h4>
+              </div>
+              <span class="small-note">Live values from your latest entries</span>
+            </div>
+            <div class="mood-bars" id="moodBars"></div>
+            <div class="mood-trend-meta" id="moodTrendMeta"></div>
+          </div>
+        </section>
+
+        <section class="panel recommendations-panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">Step 4</p>
+              <h3>Personalized Calming Recommendations</h3>
+            </div>
+          </div>
+
+          <div class="recommendation-grid" id="recommendationGrid"></div>
+        </section>
+
+        <section class="panel support-panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">Step 5</p>
+              <h3>Remember to breathe...</h3>
+            </div>
+          </div>
+
+          <div class="support-response">
+            <p id="supportResponse">
+              Share a check-in above to receive a supportive response, risk summary, and calming next
+              steps.
+            </p>
+            <button class="primary-button" id="breathingExerciseButton" type="button">
+              Start Breathing Exercise
+            </button>
+            <div class="breathing-panel hidden" id="breathingPanel">
+              <p class="section-label">Calming Exercise</p>
+              <h4>Follow the circle</h4>
+              <div class="breathing-circle" id="breathingCircle">
+                <span id="breathingText">Breathe In</span>
+              </div>
+              <button class="ghost-button" id="closeBreathingButton" type="button">
+                Close Exercise
+              </button>
+            </div>
+            
+          </div>
+
+          <div class="disclaimer">
+            <strong>Responsible AI note</strong>
+            <p>
+              This prototype is for emotional support and early awareness, not medical diagnosis. If
+              a user appears at risk, the product should clearly encourage professional or emergency
+              help pathways.
+            </p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="auth-modal hidden" id="authModal" aria-hidden="true">
+      <div class="auth-backdrop" id="authBackdrop"></div>
+      <section class="auth-dialog panel" aria-labelledby="authTitle">
+        <div class="panel-header">
+          <div>
+            <p class="section-label">Secure Access</p>
+            <h3 id="authTitle">Save Your Check-Ins</h3>
+          </div>
+          <button class="icon-button" id="closeAuthButton" type="button" aria-label="Close sign in panel">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4Z" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="auth-tabs" role="tablist" aria-label="Authentication mode">
+          <button class="chip active" id="loginTabButton" type="button">Sign In</button>
+          <button class="chip" id="registerTabButton" type="button">Create Account</button>
+        </div>
+
+        <form class="auth-form" id="authForm">
+          <label class="auth-field hidden" for="authNameField" id="authNameFieldWrap">
+            <span class="textarea-label">Name</span>
+            <input id="authNameField" name="name" type="text" placeholder="Your name" />
+          </label>
+
+          <label class="auth-field" for="authEmailField">
+            <span class="textarea-label">Email</span>
+            <input id="authEmailField" name="email" type="email" placeholder="you@example.com" required />
+          </label>
+
+          <label class="auth-field" for="authPasswordField">
+            <span class="textarea-label">Password</span>
+            <input
+              id="authPasswordField"
+              name="password"
+              type="password"
+              placeholder="Minimum 6 characters"
+              required
+            />
+          </label>
+
+          <p class="small-note auth-note" id="authDescription">
+            Sign in to keep your check-ins, saved history, and trend data connected to your account.
+          </p>
+          <p class="auth-error hidden" id="authErrorMessage"></p>
+
+          <div class="toolbar auth-toolbar">
+            <button class="primary-button" id="authSubmitButton" type="submit">Sign In</button>
+            <button class="ghost-button" id="authCancelButton" type="button">Cancel</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
+
