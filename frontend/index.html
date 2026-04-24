@@ -311,6 +311,26 @@
               </label>
             </div>
 
+            <div class="mood-calendar-card">
+              <div class="dashboard-header">
+                <div>
+                  <span class="section-label">Mood Calendar</span>
+                  <h4 id="moodCalendarTitle">Saved mood by day</h4>
+                </div>
+                <span class="small-note">Colored by average daily stress</span>
+              </div>
+              <div class="mood-calendar-weekdays" aria-hidden="true">
+                <span>Sun</span>
+                <span>Mon</span>
+                <span>Tue</span>
+                <span>Wed</span>
+                <span>Thu</span>
+                <span>Fri</span>
+                <span>Sat</span>
+              </div>
+              <div class="mood-calendar-grid" id="moodCalendarGrid"></div>
+            </div>
+
             <div class="dashboard-history-list" id="dashboardHistoryList"></div>
 
             <div class="dashboard-pagination">
@@ -345,6 +365,14 @@
               Share a check-in above to receive a supportive response, risk summary, and calming next
               steps.
             </p>
+            <div class="crisis-panel hidden" id="crisisPanel">
+              <div>
+                <span class="section-label">Safety Check</span>
+                <h4 id="crisisTitle">Support escalation</h4>
+              </div>
+              <p id="crisisGuidance"></p>
+              <div class="crisis-actions" id="crisisActions"></div>
+            </div>
             <button class="primary-button" id="breathingExerciseButton" type="button">
               Start Breathing Exercise
             </button>

@@ -28,6 +28,7 @@ async function saveCheckin(userId, payload) {
     primaryEmotionKey: String(payload.primaryEmotionKey || "neutral"),
     expressionLabel: String(payload.expressionLabel || "Not captured yet"),
     expressionScores: payload.expressionScores || null,
+    safety: payload.safety || null,
   });
 
   const entryObj = entry.toObject();
@@ -125,6 +126,7 @@ async function listCheckins(userId, options = {}) {
     },
     summary: summarizeCheckins(summaryEntries),
     trend: summaryEntries.slice(-20).map(normalizeCheckin),
+    calendar: summaryEntries.map(normalizeCheckin),
   };
 }
 

@@ -36,6 +36,12 @@ const dashboardHistoryList = document.getElementById("dashboardHistoryList");
 const dashboardPreviousButton = document.getElementById("dashboardPreviousButton");
 const dashboardNextButton = document.getElementById("dashboardNextButton");
 const dashboardPaginationLabel = document.getElementById("dashboardPaginationLabel");
+const moodCalendarGrid = document.getElementById("moodCalendarGrid");
+const moodCalendarTitle = document.getElementById("moodCalendarTitle");
+const crisisPanel = document.getElementById("crisisPanel");
+const crisisTitle = document.getElementById("crisisTitle");
+const crisisGuidance = document.getElementById("crisisGuidance");
+const crisisActions = document.getElementById("crisisActions");
 const expressionOutput = document.getElementById("expressionOutput");
 const expressionHint = document.getElementById("expressionHint");
 const expressionConfidenceList = document.getElementById("expressionConfidenceList");
@@ -646,9 +652,90 @@ function renderDashboardEmptyState(message) {
   dashboardCommonEmotion.textContent = "None yet";
   dashboardPageSummary.textContent = "No saved entries";
   dashboardHistoryList.innerHTML = `<div class="dashboard-empty">${sanitizeText(message)}</div>`;
+  moodCalendarTitle.textContent = "Saved mood by day";
+  moodCalendarGrid.innerHTML = `<div class="dashboard-empty">Calendar appears after saved check-ins.</div>`;
   dashboardPaginationLabel.textContent = "Page 1 of 1";
   dashboardPreviousButton.disabled = true;
   dashboardNextButton.disabled = true;
+}
+
+function getCalendarStressClass(stress) {
+  if (stress >= 70) {
+    return "high";
+  }
+  if (stress >= 40) {
+    return "moderate";
+  }
+  return "low";
+}
+
+function groupEntriesByDay(entries) {
+  return (entries || []).reduce((days, entry) => {
+    const parsed = new Date(entry.createdAt);
+    if (Number.isNaN(parsed.getTime())) {
+      return days;
+    }
+
+    const key = parsed.toISOString().slice(0, 10);
+    if (!days.has(key)) {
+      days.set(key, []);
+    }
+    days.get(key).push(entry);
+    return days;
+  }, new Map());
+}
+
+function renderMoodCalendar(entries = []) {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const monthName = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(today);
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  const groupedDays = groupEntriesByDay(entries);
+  const cells = [];
+
+  moodCalendarTitle.textContent = `${monthName} mood calendar`;
+
+  for (let index = 0; index < firstDay.getDay(); index += 1) {
+    cells.push(`<div class="calendar-day empty" aria-hidden="true"></div>`);
+  }
+
+  for (let day = 1; day <= lastDay.getDate(); day += 1) {
+    const date = new Date(year, month, day);
+    const key = date.toISOString().slice(0, 10);
+    const dayEntries = groupedDays.get(key) || [];
+    const averageStress = dayEntries.length
+      ? Math.round(dayEntries.reduce((sum, entry) => sum + (Number(entry.stress) || 0), 0) / dayEntries.length)
+      : 0;
+    const averageSentiment = dayEntries.length
+      ? Math.round(dayEntries.reduce((sum, entry) => sum + (Number(entry.sentiment) || 0), 0) / dayEntries.length)
+      : 0;
+    const dominantEmotion = dayEntries.length
+      ? Object.entries(
+          dayEntries.reduce((counts, entry) => {
+            const emotion = entry.emotion || "Neutral";
+            counts[emotion] = (counts[emotion] || 0) + 1;
+            return counts;
+          }, {})
+        ).sort((left, right) => right[1] - left[1])[0]?.[0]
+      : "";
+    const stressClass = dayEntries.length ? getCalendarStressClass(averageStress) : "none";
+
+    cells.push(`
+      <article class="calendar-day ${stressClass}" title="${sanitizeText(
+        dayEntries.length
+          ? `${dominantEmotion}: mood ${averageSentiment}/100, stress ${averageStress}/100`
+          : "No check-in saved"
+      )}">
+        <span>${day}</span>
+        <strong>${dayEntries.length ? sanitizeText(dominantEmotion) : ""}</strong>
+        <small>${dayEntries.length ? `${averageStress}% stress` : ""}</small>
+      </article>
+    `);
+  }
+
+  moodCalendarGrid.innerHTML = cells.join("");
 }
 
 function renderUserDashboard(payload) {
@@ -673,6 +760,7 @@ function renderUserDashboard(payload) {
   dashboardPaginationLabel.textContent = `Page ${pagination.page} of ${pagination.totalPages}`;
   dashboardPreviousButton.disabled = !pagination.hasPreviousPage;
   dashboardNextButton.disabled = !pagination.hasNextPage;
+  renderMoodCalendar(payload.calendar || payload.trend || []);
 
   if (!checkins.length) {
     dashboardHistoryList.innerHTML = `
@@ -705,6 +793,24 @@ function renderUserDashboard(payload) {
         </article>
       `;
     })
+    .join("");
+}
+
+function renderCrisisSafety(safety = null) {
+  if (!safety || safety.level === "none") {
+    crisisPanel.classList.add("hidden");
+    crisisTitle.textContent = "Support escalation";
+    crisisGuidance.textContent = "";
+    crisisActions.innerHTML = "";
+    return;
+  }
+
+  crisisPanel.classList.remove("hidden");
+  crisisPanel.classList.toggle("crisis", safety.level === "crisis");
+  crisisTitle.textContent = safety.level === "crisis" ? "Immediate support recommended" : "Extra support recommended";
+  crisisGuidance.textContent = safety.guidance || "";
+  crisisActions.innerHTML = (safety.actions || [])
+    .map((action) => `<span>${sanitizeText(action)}</span>`)
     .join("");
 }
 
@@ -752,6 +858,7 @@ async function saveCheckinToServer(analysisResult, rawText, expressionLabel = "N
         primaryEmotionKey: analysisResult.primaryEmotionKey,
         expressionLabel,
         expressionScores: latestExpressionScores,
+        safety: analysisResult.safety,
       }),
     },
     true
@@ -1187,6 +1294,7 @@ async function applyAnalysis(expressionLabel = "Not captured yet", shouldTrack =
     console.error("Text analysis failed:", error);
     supportResponse.textContent =
       "The text-analysis service is currently unavailable. Please try again after the backend is running.";
+    renderCrisisSafety(null);
     return;
   }
 
@@ -1197,6 +1305,7 @@ async function applyAnalysis(expressionLabel = "Not captured yet", shouldTrack =
   stressIndex.textContent = `${Math.round(result.stress)} / 100`;
   supportMode.textContent = result.support;
   supportResponse.textContent = result.response;
+  renderCrisisSafety(result.safety);
 
   if (shouldTrack) {
     try {

@@ -1,3 +1,5 @@
+const { analyzeCrisisSafety } = require("./crisis-safety-service");
+
 const MODEL_INFO = {
   id: "safespace-nlp-service",
   version: "1.0.0",
@@ -350,6 +352,7 @@ function buildSupportResponse(risk, sentiment, stress) {
 function analyzeText(text) {
   const normalizedText = normalizeText(text);
   if (!normalizedText) {
+    const safety = analyzeCrisisSafety("");
     return {
       emotion: "Neutral",
       sentiment: 50,
@@ -360,6 +363,7 @@ function analyzeText(text) {
       recommendations: buildRecommendations("neutral", "Low"),
       emotionSignals: { neutral: 1 },
       primaryEmotionKey: "neutral",
+      safety,
       model: MODEL_INFO,
     };
   }
@@ -442,12 +446,13 @@ function analyzeText(text) {
     100
   );
 
+  const safety = analyzeCrisisSafety(text, { sentiment, stress });
   let risk = "Low";
   let support = "Gentle check-in";
-  if (severeHits > 0 || stress >= 78 || sentiment <= 18) {
+  if (safety.level === "crisis" || severeHits > 0 || stress >= 78 || sentiment <= 18) {
     risk = "High";
     support = "Immediate calming support";
-  } else if (stress >= 45 || sentiment <= 45 || negativeHits > positiveHits + 1) {
+  } else if (safety.level === "elevated" || stress >= 45 || sentiment <= 45 || negativeHits > positiveHits + 1) {
     risk = "Moderate";
     support = "Structured support";
   } else if (sentiment >= 68 && stress <= 34) {
@@ -464,6 +469,7 @@ function analyzeText(text) {
     recommendations: buildRecommendations(primaryEmotionKey, risk),
     emotionSignals,
     primaryEmotionKey,
+    safety,
     model: MODEL_INFO,
   };
 }
