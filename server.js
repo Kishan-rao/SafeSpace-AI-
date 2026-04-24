@@ -9,7 +9,7 @@ const connectDB = require("./backend/config/db");
 const { analyzeExpression, MODEL_INFO } = require("./backend/expression-service");
 const { analyzeText, MODEL_INFO: TEXT_MODEL_INFO } = require("./backend/text-analysis-service");
 const { getUserForToken, invalidateSession, loginUser, registerUser } = require("./backend/auth-service");
-const { listRecentCheckins, saveCheckin } = require("./backend/checkin-service");
+const { listCheckins, listRecentCheckins, saveCheckin } = require("./backend/checkin-service");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -155,8 +155,13 @@ app.post("/api/auth/logout", async (req, res) => {
 // Check-ins Endpoints
 app.get("/api/checkins", requireAuth, async (req, res, next) => {
   try {
-    const checkins = await listRecentCheckins(req.user.id, 5);
-    res.status(200).json({ checkins });
+    const result = await listCheckins(req.user.id, {
+      page: req.query.page,
+      limit: req.query.limit,
+      emotion: req.query.emotion,
+      risk: req.query.risk,
+    });
+    res.status(200).json(result);
   } catch (error) {
     next(error);
   }

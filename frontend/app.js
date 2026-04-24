@@ -24,6 +24,18 @@ const recommendationGrid = document.getElementById("recommendationGrid");
 const supportResponse = document.getElementById("supportResponse");
 const moodBars = document.getElementById("moodBars");
 const moodTrendMeta = document.getElementById("moodTrendMeta");
+const userDashboardCard = document.getElementById("userDashboardCard");
+const dashboardPageSummary = document.getElementById("dashboardPageSummary");
+const dashboardTotalEntries = document.getElementById("dashboardTotalEntries");
+const dashboardAverageSentiment = document.getElementById("dashboardAverageSentiment");
+const dashboardAverageStress = document.getElementById("dashboardAverageStress");
+const dashboardCommonEmotion = document.getElementById("dashboardCommonEmotion");
+const dashboardEmotionFilter = document.getElementById("dashboardEmotionFilter");
+const dashboardRiskFilter = document.getElementById("dashboardRiskFilter");
+const dashboardHistoryList = document.getElementById("dashboardHistoryList");
+const dashboardPreviousButton = document.getElementById("dashboardPreviousButton");
+const dashboardNextButton = document.getElementById("dashboardNextButton");
+const dashboardPaginationLabel = document.getElementById("dashboardPaginationLabel");
 const expressionOutput = document.getElementById("expressionOutput");
 const expressionHint = document.getElementById("expressionHint");
 const expressionConfidenceList = document.getElementById("expressionConfidenceList");
@@ -76,6 +88,13 @@ let sentimentHistory = [];
 let currentUser = null;
 let authMode = "login";
 let authToken = localStorage.getItem(authTokenStorageKey) || "";
+let dashboardState = {
+  page: 1,
+  limit: 20,
+  totalPages: 1,
+  emotion: "",
+  risk: "",
+};
 
 const recommendationLibrary = {
   high: [
@@ -503,6 +522,10 @@ function applyAuthState() {
     : "Sign in to save your check-ins, mood history, and personalized trend data securely.";
   openAuthButton.classList.toggle("hidden", isSignedIn);
   logoutButton.classList.toggle("hidden", !isSignedIn);
+  userDashboardCard.classList.toggle("hidden", !isSignedIn);
+  if (!isSignedIn) {
+    renderDashboardEmptyState("Sign in to view saved check-ins and dashboard history.");
+  }
   renderSentimentTrend();
 }
 
@@ -599,19 +622,114 @@ function renderSentimentTrend() {
     .join("");
 }
 
-async function loadCheckinsFromServer() {
-  if (!authToken) {
-    setSentimentHistory([]);
-    renderSentimentTrend();
+function buildCheckinsUrl({ page = 1, limit = 20, emotion = "", risk = "" } = {}) {
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: String(limit),
+  });
+
+  if (emotion) {
+    params.set("emotion", emotion);
+  }
+
+  if (risk) {
+    params.set("risk", risk);
+  }
+
+  return `${checkinsApiUrl}?${params.toString()}`;
+}
+
+function renderDashboardEmptyState(message) {
+  dashboardTotalEntries.textContent = "0";
+  dashboardAverageSentiment.textContent = "0 / 100";
+  dashboardAverageStress.textContent = "0 / 100";
+  dashboardCommonEmotion.textContent = "None yet";
+  dashboardPageSummary.textContent = "No saved entries";
+  dashboardHistoryList.innerHTML = `<div class="dashboard-empty">${sanitizeText(message)}</div>`;
+  dashboardPaginationLabel.textContent = "Page 1 of 1";
+  dashboardPreviousButton.disabled = true;
+  dashboardNextButton.disabled = true;
+}
+
+function renderUserDashboard(payload) {
+  const checkins = payload.checkins || [];
+  const pagination = payload.pagination || {
+    page: 1,
+    totalPages: 1,
+    total: checkins.length,
+    hasNextPage: false,
+    hasPreviousPage: false,
+  };
+  const summary = payload.summary || {};
+
+  dashboardState.page = pagination.page;
+  dashboardState.totalPages = pagination.totalPages;
+
+  dashboardTotalEntries.textContent = String(summary.totalEntries || 0);
+  dashboardAverageSentiment.textContent = `${Math.round(summary.averageSentiment || 0)} / 100`;
+  dashboardAverageStress.textContent = `${Math.round(summary.averageStress || 0)} / 100`;
+  dashboardCommonEmotion.textContent = summary.mostCommonEmotion || "None yet";
+  dashboardPageSummary.textContent = `${pagination.total || 0} saved entries`;
+  dashboardPaginationLabel.textContent = `Page ${pagination.page} of ${pagination.totalPages}`;
+  dashboardPreviousButton.disabled = !pagination.hasPreviousPage;
+  dashboardNextButton.disabled = !pagination.hasNextPage;
+
+  if (!checkins.length) {
+    dashboardHistoryList.innerHTML = `
+      <div class="dashboard-empty">
+        No check-ins match these filters yet.
+      </div>
+    `;
     return;
   }
 
-  try {
-    const response = await apiRequest(checkinsApiUrl, { method: "GET" }, true);
-    setSentimentHistory(mapCheckinsToTrendEntries(response.checkins));
+  dashboardHistoryList.innerHTML = checkins
+    .map((entry) => {
+      const riskClass = String(entry.risk || "Low").toLowerCase();
+      return `
+        <article class="dashboard-history-item">
+          <div class="history-head">
+            <div>
+              <strong>${sanitizeText(entry.emotion || "Neutral")}</strong>
+              <div class="history-meta">${sanitizeText(formatEntryTime(entry.createdAt))}</div>
+            </div>
+            <span class="history-risk ${sanitizeText(riskClass)}">${sanitizeText(entry.risk || "Low")} risk</span>
+          </div>
+          <p class="history-text">${sanitizeText(entry.text || "No written note saved.")}</p>
+          <div class="history-score-row">
+            <span>Sentiment ${Math.round(entry.sentiment || 0)} / 100</span>
+            <span>Stress ${Math.round(entry.stress || 0)} / 100</span>
+            <span>${sanitizeText(entry.support || "Gentle check-in")}</span>
+            <span>Expression: ${sanitizeText(entry.expressionLabel || "Not captured yet")}</span>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+async function loadCheckinsFromServer(options = {}) {
+  if (!authToken) {
+    setSentimentHistory([]);
     renderSentimentTrend();
+    renderDashboardEmptyState("Sign in to view saved check-ins and dashboard history.");
+    return;
+  }
+
+  dashboardState = {
+    ...dashboardState,
+    ...options,
+  };
+
+  try {
+    const response = await apiRequest(buildCheckinsUrl(dashboardState), { method: "GET" }, true);
+    const trendEntries = response.trend || response.checkins || [];
+    setSentimentHistory(mapCheckinsToTrendEntries(trendEntries).slice(-5));
+    renderSentimentTrend();
+    renderUserDashboard(response);
   } catch (error) {
     console.error("Check-in history could not be loaded:", error);
+    renderDashboardEmptyState("Check-in history could not be loaded right now.");
   }
 }
 
@@ -640,6 +758,7 @@ async function saveCheckinToServer(analysisResult, rawText, expressionLabel = "N
   );
 
   setSentimentHistory(mapCheckinsToTrendEntries(response.checkins));
+  await loadCheckinsFromServer({ page: 1 });
 }
 
 function getConfidenceInsight(label, score) {
@@ -1140,6 +1259,15 @@ async function handleLogout() {
   currentUser = null;
   setAuthToken("");
   setSentimentHistory([]);
+  dashboardState = {
+    page: 1,
+    limit: 20,
+    totalPages: 1,
+    emotion: "",
+    risk: "",
+  };
+  dashboardEmotionFilter.value = "";
+  dashboardRiskFilter.value = "";
   applyAuthState();
 }
 
@@ -1306,6 +1434,18 @@ authBackdrop.addEventListener("click", closeAuthModal);
 loginTabButton.addEventListener("click", () => setAuthMode("login"));
 registerTabButton.addEventListener("click", () => setAuthMode("register"));
 authForm.addEventListener("submit", handleAuthSubmit);
+dashboardEmotionFilter.addEventListener("change", () => {
+  loadCheckinsFromServer({ page: 1, emotion: dashboardEmotionFilter.value });
+});
+dashboardRiskFilter.addEventListener("change", () => {
+  loadCheckinsFromServer({ page: 1, risk: dashboardRiskFilter.value });
+});
+dashboardPreviousButton.addEventListener("click", () => {
+  loadCheckinsFromServer({ page: Math.max(dashboardState.page - 1, 1) });
+});
+dashboardNextButton.addEventListener("click", () => {
+  loadCheckinsFromServer({ page: Math.min(dashboardState.page + 1, dashboardState.totalPages) });
+});
 startCameraButton.addEventListener("click", startCamera);
 toggleCameraButton.addEventListener("click", startCamera);
 stopCameraButton.addEventListener("click", stopCamera);

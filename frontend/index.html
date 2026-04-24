@@ -252,6 +252,73 @@
             <div class="mood-bars" id="moodBars"></div>
             <div class="mood-trend-meta" id="moodTrendMeta"></div>
           </div>
+
+          <div class="user-dashboard-card hidden" id="userDashboardCard">
+            <div class="dashboard-header">
+              <div>
+                <span class="section-label">Account Dashboard</span>
+                <h4>Your check-in history</h4>
+              </div>
+              <span class="small-note" id="dashboardPageSummary">Sign in to view saved entries</span>
+            </div>
+
+            <div class="dashboard-summary-grid">
+              <article class="dashboard-summary-card">
+                <span>Total check-ins</span>
+                <strong id="dashboardTotalEntries">0</strong>
+              </article>
+              <article class="dashboard-summary-card">
+                <span>Average mood</span>
+                <strong id="dashboardAverageSentiment">0 / 100</strong>
+              </article>
+              <article class="dashboard-summary-card">
+                <span>Average stress</span>
+                <strong id="dashboardAverageStress">0 / 100</strong>
+              </article>
+              <article class="dashboard-summary-card">
+                <span>Most common emotion</span>
+                <strong id="dashboardCommonEmotion">None yet</strong>
+              </article>
+            </div>
+
+            <div class="dashboard-filter-row">
+              <label class="dashboard-filter">
+                <span>Emotion</span>
+                <select id="dashboardEmotionFilter">
+                  <option value="">All emotions</option>
+                  <option value="Calm">Calm</option>
+                  <option value="Joy">Joy</option>
+                  <option value="Hopeful">Hopeful</option>
+                  <option value="Focused">Focused</option>
+                  <option value="Neutral">Neutral</option>
+                  <option value="Fatigue">Fatigue</option>
+                  <option value="Sadness">Sadness</option>
+                  <option value="Anxiety">Anxiety</option>
+                  <option value="Stress">Stress</option>
+                  <option value="Anger">Anger</option>
+                  <option value="Fear">Fear</option>
+                  <option value="Overwhelm">Overwhelm</option>
+                </select>
+              </label>
+              <label class="dashboard-filter">
+                <span>Risk</span>
+                <select id="dashboardRiskFilter">
+                  <option value="">All risk levels</option>
+                  <option value="Low">Low</option>
+                  <option value="Moderate">Moderate</option>
+                  <option value="High">High</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="dashboard-history-list" id="dashboardHistoryList"></div>
+
+            <div class="dashboard-pagination">
+              <button class="ghost-button" id="dashboardPreviousButton" type="button">Previous</button>
+              <span id="dashboardPaginationLabel">Page 1 of 1</span>
+              <button class="ghost-button" id="dashboardNextButton" type="button">Next</button>
+            </div>
+          </div>
         </section>
 
         <section class="panel recommendations-panel">
@@ -365,4 +432,3 @@
     <script src="./app.js"></script>
   </body>
 </html>
-
