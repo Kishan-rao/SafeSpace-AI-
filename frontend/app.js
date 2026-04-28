@@ -1103,8 +1103,42 @@ function getIntensityLabel(probability) {
   return "Low";
 }
 
+function getDistressLevel(analysisResult = {}) {
+  const sentiment = Number(analysisResult.sentiment) || 0;
+  const stress = Number(analysisResult.stress) || 0;
+  const signals = analysisResult.emotionSignals || {};
+  const challengingSignal = ["sadness", "anger", "anxiety", "stress", "fear", "overwhelm", "fatigue"].reduce(
+    (total, key) => total + (Number(signals[key]) || 0),
+    0
+  );
+
+  if (analysisResult.risk === "High" || stress >= 70 || sentiment <= 25 || challengingSignal >= 3.5) {
+    return "high";
+  }
+
+  if (analysisResult.risk === "Moderate" || stress >= 45 || sentiment <= 42 || challengingSignal >= 1.8) {
+    return "moderate";
+  }
+
+  return "low";
+}
+
+function dampenContradictoryPositiveScore(score, emotion, context) {
+  if (emotion.valence !== "Positive" || context.distressLevel === "low") {
+    return score;
+  }
+
+  const hasExplicitPositiveSignal = context.keywordHits > 0 || context.textSignal >= 0.5;
+  if (hasExplicitPositiveSignal) {
+    return score * (context.distressLevel === "high" ? 0.35 : 0.65);
+  }
+
+  return 0;
+}
+
 function buildEmotionSpectrum(normalizedText, analysisResult, expressionScores = null) {
   const facialBlend = buildFacialEmotionBlend(expressionScores || {});
+  const distressLevel = getDistressLevel(analysisResult);
   const entries = emotionModelCatalog.map((emotion) => {
     const keywordHits = countKeywordHits(normalizedText, emotion.keywords);
     const textSignal = analysisResult.emotionSignals?.[emotion.key] || 0;
@@ -1126,7 +1160,13 @@ function buildEmotionSpectrum(normalizedText, analysisResult, expressionScores =
       score += 1.25;
     }
 
-    return { ...emotion, rawScore: Math.max(score, 0.05), keywordHits };
+    score = dampenContradictoryPositiveScore(score, emotion, {
+      distressLevel,
+      keywordHits,
+      textSignal,
+    });
+
+    return { ...emotion, rawScore: Math.max(score, 0), keywordHits };
   });
 
   const poweredEntries = entries.map((entry) => ({

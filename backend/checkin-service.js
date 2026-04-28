@@ -1,5 +1,8 @@
 const Checkin = require("./models/Checkin");
 
+const CHECKIN_SELECT_FIELDS =
+  "text sentiment stress emotion risk support primaryEmotionKey expressionLabel expressionScores safety createdAt";
+
 function normalizeCheckin(entry) {
   const normalized = { ...entry };
   normalized.id = normalized._id.toString();
@@ -14,6 +17,32 @@ function clampInteger(value, fallback, min, max) {
     return fallback;
   }
   return Math.min(Math.max(parsed, min), max);
+}
+
+function parseDate(value) {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getCalendarRange(monthValue) {
+  const now = new Date();
+  const match = String(monthValue || "").match(/^(\d{4})-(\d{2})$/);
+  const year = match ? Number(match[1]) : now.getUTCFullYear();
+  const monthIndex = match ? Number(match[2]) - 1 : now.getUTCMonth();
+  const safeYear = Number.isInteger(year) && year >= 1970 && year <= 9999 ? year : now.getUTCFullYear();
+  const safeMonthIndex = Number.isInteger(monthIndex) && monthIndex >= 0 && monthIndex <= 11 ? monthIndex : now.getUTCMonth();
+  const start = new Date(Date.UTC(safeYear, safeMonthIndex, 1));
+  const end = new Date(Date.UTC(safeYear, safeMonthIndex + 1, 1));
+
+  return {
+    start,
+    end,
+    month: `${safeYear}-${String(safeMonthIndex + 1).padStart(2, "0")}`,
+  };
+}
+
+function normalizeExactFilter(value) {
+  return String(value || "").trim();
 }
 
 async function saveCheckin(userId, payload) {
@@ -39,6 +68,7 @@ async function listRecentCheckins(userId, limit = 5) {
   const checkins = await Checkin.find({ userId })
     .sort({ createdAt: -1 })
     .limit(limit)
+    .select(CHECKIN_SELECT_FIELDS)
     .lean();
 
   return checkins.map(normalizeCheckin).reverse();
@@ -46,22 +76,51 @@ async function listRecentCheckins(userId, limit = 5) {
 
 function buildCheckinQuery(userId, filters = {}) {
   const query = { userId };
-  const emotion = String(filters.emotion || "").trim();
-  const risk = String(filters.risk || "").trim();
+  const emotion = normalizeExactFilter(filters.emotion);
+  const risk = normalizeExactFilter(filters.risk);
+  const from = parseDate(filters.from);
+  const to = parseDate(filters.to);
 
   if (emotion) {
-    query.emotion = new RegExp(`^${emotion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    query.emotion = emotion;
   }
 
   if (risk) {
-    query.risk = new RegExp(`^${risk.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    query.risk = risk;
+  }
+
+  if (from || to) {
+    query.createdAt = {};
+    if (from) {
+      query.createdAt.$gte = from;
+    }
+    if (to) {
+      query.createdAt.$lt = to;
+    }
   }
 
   return query;
 }
 
-function summarizeCheckins(checkins) {
-  if (!checkins.length) {
+async function summarizeCheckins(query) {
+  const [summary] = await Checkin.aggregate([
+    { $match: query },
+    {
+      $group: {
+        _id: null,
+        totalEntries: { $sum: 1 },
+        averageSentiment: { $avg: "$sentiment" },
+        averageStress: { $avg: "$stress" },
+        highRiskCount: {
+          $sum: {
+            $cond: [{ $eq: ["$risk", "High"] }, 1, 0],
+          },
+        },
+      },
+    },
+  ]);
+
+  if (!summary) {
     return {
       totalEntries: 0,
       averageSentiment: 0,
@@ -71,28 +130,24 @@ function summarizeCheckins(checkins) {
     };
   }
 
-  const emotionCounts = new Map();
-  const totals = checkins.reduce(
-    (summary, entry) => {
-      const emotion = entry.emotion || "Neutral";
-      emotionCounts.set(emotion, (emotionCounts.get(emotion) || 0) + 1);
-      summary.sentiment += Number(entry.sentiment) || 0;
-      summary.stress += Number(entry.stress) || 0;
-      summary.highRisk += entry.risk === "High" ? 1 : 0;
-      return summary;
+  const [emotionSummary] = await Checkin.aggregate([
+    { $match: query },
+    {
+      $group: {
+        _id: "$emotion",
+        count: { $sum: 1 },
+      },
     },
-    { sentiment: 0, stress: 0, highRisk: 0 }
-  );
-
-  const mostCommonEmotion =
-    [...emotionCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] || "Neutral";
+    { $sort: { count: -1, _id: 1 } },
+    { $limit: 1 },
+  ]);
 
   return {
-    totalEntries: checkins.length,
-    averageSentiment: Math.round(totals.sentiment / checkins.length),
-    averageStress: Math.round(totals.stress / checkins.length),
-    mostCommonEmotion,
-    highRiskCount: totals.highRisk,
+    totalEntries: summary.totalEntries,
+    averageSentiment: Math.round(summary.averageSentiment || 0),
+    averageStress: Math.round(summary.averageStress || 0),
+    mostCommonEmotion: emotionSummary?._id || "Neutral",
+    highRiskCount: summary.highRiskCount || 0,
   };
 }
 
@@ -100,12 +155,24 @@ async function listCheckins(userId, options = {}) {
   const page = clampInteger(options.page, 1, 1, 100000);
   const limit = clampInteger(options.limit, 20, 1, 50);
   const query = buildCheckinQuery(userId, options);
+  const calendarRange = getCalendarRange(options.month);
+  const calendarQuery = buildCheckinQuery(userId, {
+    ...options,
+    from: calendarRange.start,
+    to: calendarRange.end,
+  });
   const skip = (page - 1) * limit;
 
-  const [total, pageEntries, summaryEntries] = await Promise.all([
+  const [total, pageEntries, summary, trendEntries, calendarEntries] = await Promise.all([
     Checkin.countDocuments(query),
-    Checkin.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-    Checkin.find(query).select("sentiment stress emotion risk createdAt").sort({ createdAt: 1 }).lean(),
+    Checkin.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).select(CHECKIN_SELECT_FIELDS).lean(),
+    summarizeCheckins(query),
+    Checkin.find(query)
+      .select("text sentiment stress emotion risk createdAt")
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean(),
+    Checkin.find(calendarQuery).select("sentiment stress emotion risk createdAt").sort({ createdAt: 1 }).lean(),
   ]);
 
   const totalPages = Math.max(Math.ceil(total / limit), 1);
@@ -123,10 +190,11 @@ async function listCheckins(userId, options = {}) {
     filters: {
       emotion: String(options.emotion || "").trim(),
       risk: String(options.risk || "").trim(),
+      month: calendarRange.month,
     },
-    summary: summarizeCheckins(summaryEntries),
-    trend: summaryEntries.slice(-20).map(normalizeCheckin),
-    calendar: summaryEntries.map(normalizeCheckin),
+    summary,
+    trend: trendEntries.map(normalizeCheckin).reverse(),
+    calendar: calendarEntries.map(normalizeCheckin),
   };
 }
 

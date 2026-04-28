@@ -19,6 +19,8 @@ function setDisconnectedStatus(error = null) {
 async function connectDB() {
   const mongoUri = process.env.MONGODB_URI;
   const timeoutMs = Number(process.env.MONGODB_CONNECT_TIMEOUT_MS) || 5000;
+  const maxPoolSize = Number(process.env.MONGODB_MAX_POOL_SIZE) || 20;
+  const minPoolSize = Number(process.env.MONGODB_MIN_POOL_SIZE) || 0;
 
   if (!mongoUri) {
     const error = new Error("MONGODB_URI is not configured.");
@@ -34,6 +36,8 @@ async function connectDB() {
     const connectionAttempt = mongoose.connect(mongoUri, {
       connectTimeoutMS: timeoutMs,
       serverSelectionTimeoutMS: Number(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS) || timeoutMs,
+      maxPoolSize,
+      minPoolSize,
     });
 
     connectionAttempt.catch(() => {});

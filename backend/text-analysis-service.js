@@ -21,6 +21,8 @@ const EMOTION_MODEL_CATALOG = [
   { key: "overwhelm", label: "Overwhelm" },
 ];
 
+const POSITIVE_EMOTION_KEYS = new Set(["calm", "joy", "hopeful", "focused"]);
+
 const EMOTION_PROTOTYPES = {
   calm: "steady grounded settled peaceful breathing relaxed safe centered composed slow",
   joy: "happy joyful delighted excited grateful smiling optimistic bright wonderful amazing uplifted",
@@ -38,6 +40,8 @@ const EMOTION_PROTOTYPES = {
 
 const TOKEN_WEIGHTS = {
   amazing: 2.4,
+  angry: -2.4,
+  annoyed: -1.8,
   anxious: -2.3,
   burnout: -2.4,
   calm: 2.2,
@@ -53,11 +57,14 @@ const TOKEN_WEIGHTS = {
   exhausted: -2.4,
   fine: 0.2,
   focused: 1.7,
+  frustrated: -2.1,
+  furious: -2.8,
   grateful: 2.0,
   grounded: 1.8,
   happy: 2.2,
   hopeless: -3.1,
   hurt: -1.9,
+  irritated: -2.0,
   joy: 2.5,
   lonely: -2.3,
   low: -0.9,
@@ -307,7 +314,7 @@ function buildEmotionSignals(normalizedText, tokens) {
   EMOTION_MODEL_CATALOG.forEach((emotion) => {
     const prototypeVector = buildVector(EMOTION_PROTOTYPES[emotion.key]);
     const similarity = cosineSimilarity(docVector, prototypeVector);
-    const directHits = tokens.filter((token) => EMOTION_PROTOTYPES[emotion.key].includes(token)).length;
+    const directHits = tokens.reduce((total, token) => total + (prototypeVector[token] || 0), 0);
     signals[emotion.key] = Number((similarity * 5.2 + directHits * 0.22).toFixed(4));
   });
 
@@ -316,6 +323,30 @@ function buildEmotionSignals(normalizedText, tokens) {
   }
 
   return signals;
+}
+
+function getDominantEmotionKey(emotionSignals) {
+  return Object.entries(emotionSignals).sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral";
+}
+
+function dampenContradictoryPositiveSignals(emotionSignals, context) {
+  const sentiment = Number(context.sentiment) || 0;
+  const stress = Number(context.stress) || 0;
+  const highDistress = context.risk === "High" || stress >= 70 || sentiment <= 25;
+  const moderateDistress = context.risk === "Moderate" || stress >= 45 || sentiment <= 42;
+  const hasExplicitPositiveLanguage = context.positiveHits > 0;
+  const multiplier = highDistress ? (hasExplicitPositiveLanguage ? 0.35 : 0) : moderateDistress ? 0.35 : 1;
+
+  if (multiplier === 1) {
+    return emotionSignals;
+  }
+
+  const adjustedSignals = { ...emotionSignals };
+  POSITIVE_EMOTION_KEYS.forEach((key) => {
+    adjustedSignals[key] = Number(((adjustedSignals[key] || 0) * multiplier).toFixed(4));
+  });
+
+  return adjustedSignals;
 }
 
 function buildRecommendations(primaryEmotionKey, risk) {
@@ -370,11 +401,7 @@ function analyzeText(text) {
 
   const rawTokens = tokenize(normalizedText);
   const tokens = rawTokens.map(simpleStem);
-  const emotionSignals = buildEmotionSignals(normalizedText, tokens);
-  const primaryEmotionKey =
-    Object.entries(emotionSignals).sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral";
-  const primaryEmotionLabel =
-    EMOTION_MODEL_CATALOG.find((emotion) => emotion.key === primaryEmotionKey)?.label || "Neutral";
+  let emotionSignals = buildEmotionSignals(normalizedText, tokens);
 
   let valenceTotal = 0;
   let stressSignal = 0;
@@ -458,6 +485,16 @@ function analyzeText(text) {
   } else if (sentiment >= 68 && stress <= 34) {
     support = "Mood maintenance";
   }
+
+  emotionSignals = dampenContradictoryPositiveSignals(emotionSignals, {
+    sentiment,
+    stress,
+    risk,
+    positiveHits,
+  });
+  const primaryEmotionKey = getDominantEmotionKey(emotionSignals);
+  const primaryEmotionLabel =
+    EMOTION_MODEL_CATALOG.find((emotion) => emotion.key === primaryEmotionKey)?.label || "Neutral";
 
   return {
     emotion: primaryEmotionLabel,

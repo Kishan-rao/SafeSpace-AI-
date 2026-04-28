@@ -53,7 +53,11 @@ const checkinSchema = new mongoose.Schema({
   },
 });
 
-// Index to easily fetch recent checkins for a user
+// Query patterns used by the dashboard: recent history, filtered history,
+// aggregate summaries, and month-sized calendar lookups.
 checkinSchema.index({ userId: 1, createdAt: -1 });
+checkinSchema.index({ userId: 1, emotion: 1, createdAt: -1 });
+checkinSchema.index({ userId: 1, risk: 1, createdAt: -1 });
+checkinSchema.index({ userId: 1, risk: 1, emotion: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Checkin", checkinSchema);

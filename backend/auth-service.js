@@ -1,6 +1,9 @@
 const crypto = require("crypto");
+const { promisify } = require("util");
 const User = require("./models/User");
 const Session = require("./models/Session");
+
+const scrypt = promisify(crypto.scrypt);
 
 function sanitizeUser(user) {
   if (!user) {
@@ -23,19 +26,19 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
-  const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${derivedKey}`;
+async function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const derivedKey = await scrypt(password, salt, 64);
+  return `${salt}:${derivedKey.toString("hex")}`;
 }
 
-function verifyPassword(password, storedHash) {
+async function verifyPassword(password, storedHash) {
   const [salt, expected] = String(storedHash || "").split(":");
   if (!salt || !expected) {
     return false;
   }
 
-  const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
-  const derivedBuffer = Buffer.from(derivedKey, "hex");
+  const derivedKey = await scrypt(password, salt, 64);
+  const derivedBuffer = Buffer.from(derivedKey);
   const expectedBuffer = Buffer.from(expected, "hex");
 
   if (derivedBuffer.length !== expectedBuffer.length) {
@@ -47,6 +50,28 @@ function verifyPassword(password, storedHash) {
 
 function createSessionToken() {
   return crypto.randomBytes(32).toString("hex");
+}
+
+function hashSessionToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function buildSessionResponse(session, token) {
+  return {
+    token,
+    userId: session.document.userId,
+    createdAt: session.document.createdAt,
+  };
+}
+
+/*
+ * Kept as a local helper so session lookup can use tokenHash when available
+ * while still supporting the existing unique token index.
+ */
+function buildSessionLookup(token) {
+  return {
+    $or: [{ tokenHash: hashSessionToken(token) }, { token }],
+  };
 }
 
 async function registerUser({ name, email, password }) {
@@ -72,7 +97,7 @@ async function registerUser({ name, email, password }) {
     user = await User.create({
       name: trimmedName,
       email: normalizedEmail,
-      passwordHash: hashPassword(safePassword),
+      passwordHash: await hashPassword(safePassword),
     });
   } catch (error) {
     if (error.code === 11000) {
@@ -84,11 +109,7 @@ async function registerUser({ name, email, password }) {
   const session = await createSessionForUser(user._id);
   return {
     user: sanitizeUser(user),
-    session: {
-      token: session.token,
-      userId: session.userId,
-      createdAt: session.createdAt,
-    },
+    session: buildSessionResponse(session, session.token),
   };
 }
 
@@ -102,29 +123,26 @@ async function loginUser({ email, password }) {
 
   const user = await User.findOne({ email: normalizedEmail });
 
-  if (!user || !verifyPassword(safePassword, user.passwordHash)) {
+  if (!user || !(await verifyPassword(safePassword, user.passwordHash))) {
     throw new Error("Invalid email or password.");
   }
 
   const session = await createSessionForUser(user._id);
   return {
     user: sanitizeUser(user),
-    session: {
-      token: session.token,
-      userId: session.userId,
-      createdAt: session.createdAt,
-    },
+    session: buildSessionResponse(session, session.token),
   };
 }
 
 async function createSessionForUser(userId) {
   const token = createSessionToken();
-  const session = await Session.create({
+  const document = await Session.create({
     token,
+    tokenHash: hashSessionToken(token),
     userId,
   });
 
-  return session;
+  return { document, token };
 }
 
 async function getUserForToken(token) {
@@ -132,7 +150,7 @@ async function getUserForToken(token) {
     return null;
   }
 
-  const session = await Session.findOne({ token }).populate("userId");
+  const session = await Session.findOne(buildSessionLookup(token)).populate("userId");
   if (!session || !session.userId) {
     return null;
   }
@@ -145,7 +163,7 @@ async function invalidateSession(token) {
     return;
   }
 
-  await Session.deleteOne({ token });
+  await Session.deleteOne(buildSessionLookup(token));
 }
 
 module.exports = {

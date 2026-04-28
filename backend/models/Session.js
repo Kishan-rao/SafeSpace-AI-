@@ -6,6 +6,11 @@ const sessionSchema = new mongoose.Schema({
     required: true,
     unique: true,
   },
+  tokenHash: {
+    type: String,
+    unique: true,
+    sparse: true,
+  },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
