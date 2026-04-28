@@ -3,6 +3,10 @@ const User = require("./models/User");
 const Session = require("./models/Session");
 
 function sanitizeUser(user) {
+  if (!user) {
+    return null;
+  }
+
   return {
     id: user._id.toString(),
     name: user.name,
@@ -13,6 +17,10 @@ function sanitizeUser(user) {
 
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
@@ -27,7 +35,14 @@ function verifyPassword(password, storedHash) {
   }
 
   const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
-  return crypto.timingSafeEqual(Buffer.from(derivedKey, "hex"), Buffer.from(expected, "hex"));
+  const derivedBuffer = Buffer.from(derivedKey, "hex");
+  const expectedBuffer = Buffer.from(expected, "hex");
+
+  if (derivedBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(derivedBuffer, expectedBuffer);
 }
 
 function createSessionToken() {
@@ -43,16 +58,28 @@ async function registerUser({ name, email, password }) {
     throw new Error("Name, email, and a password of at least 6 characters are required.");
   }
 
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error("A valid email address is required.");
+  }
+
   const existingUser = await User.findOne({ email: normalizedEmail });
   if (existingUser) {
     throw new Error("An account with that email already exists.");
   }
 
-  const user = await User.create({
-    name: trimmedName,
-    email: normalizedEmail,
-    passwordHash: hashPassword(safePassword),
-  });
+  let user;
+  try {
+    user = await User.create({
+      name: trimmedName,
+      email: normalizedEmail,
+      passwordHash: hashPassword(safePassword),
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      throw new Error("An account with that email already exists.");
+    }
+    throw error;
+  }
 
   const session = await createSessionForUser(user._id);
   return {
@@ -60,7 +87,7 @@ async function registerUser({ name, email, password }) {
     session: {
       token: session.token,
       userId: session.userId,
-      createdAt: session.createdAt
+      createdAt: session.createdAt,
     },
   };
 }
@@ -68,6 +95,10 @@ async function registerUser({ name, email, password }) {
 async function loginUser({ email, password }) {
   const normalizedEmail = normalizeEmail(email);
   const safePassword = String(password || "");
+
+  if (!isValidEmail(normalizedEmail) || !safePassword) {
+    throw new Error("Invalid email or password.");
+  }
 
   const user = await User.findOne({ email: normalizedEmail });
 
@@ -81,7 +112,7 @@ async function loginUser({ email, password }) {
     session: {
       token: session.token,
       userId: session.userId,
-      createdAt: session.createdAt
+      createdAt: session.createdAt,
     },
   };
 }

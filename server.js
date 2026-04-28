@@ -4,7 +4,8 @@ const path = require("path");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
-const connectDB = require("./backend/config/db");
+const mongoose = require("mongoose");
+const { connectDB, getDBStatus, isDBReady } = require("./backend/config/db");
 
 const { analyzeExpression, MODEL_INFO } = require("./backend/expression-service");
 const { analyzeText, MODEL_INFO: TEXT_MODEL_INFO } = require("./backend/text-analysis-service");
@@ -49,29 +50,63 @@ function getBearerToken(request) {
 
 // Custom middleware to require user authentication
 async function requireAuth(req, res, next) {
-  const token = getBearerToken(req);
-  if (!token) {
-    return res.status(401).json({ error: "Authentication required" });
+  try {
+    if (!isDBReady()) {
+      return res.status(503).json({
+        error: "Database unavailable",
+        detail: "Authentication is temporarily unavailable because MongoDB is not connected.",
+      });
+    }
+
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+
+    const user = await getUserForToken(token);
+    if (!user) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+
+    req.token = token;
+    req.user = user;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function requireDB(req, res, next) {
+  if (!isDBReady()) {
+    return res.status(503).json({
+      error: "Database unavailable",
+      detail: "This endpoint requires MongoDB. Check MONGODB_URI, Atlas network access, and credentials.",
+    });
   }
 
-  const user = await getUserForToken(token);
-  if (!user) {
-    return res.status(401).json({ error: "Authentication required" });
-  }
-
-  req.token = token;
-  req.user = user;
   next();
 }
 
 // ----- Routes -----
 
 // Health Endpoints
+app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: "safespace-backend",
+    database: getDBStatus(),
+    serverSessionId: SERVER_SESSION_ID,
+    bootedAt: SERVER_BOOTED_AT,
+    date: new Date().toISOString(),
+  });
+});
+
 app.get("/api/expression/health", (req, res) => {
   res.status(200).json({
     ok: true,
     service: "expression-processing",
     model: MODEL_INFO,
+    database: getDBStatus(),
     serverSessionId: SERVER_SESSION_ID,
     bootedAt: SERVER_BOOTED_AT,
     date: new Date().toISOString(),
@@ -83,6 +118,7 @@ app.get("/api/text/health", (req, res) => {
     ok: true,
     service: "text-analysis",
     model: TEXT_MODEL_INFO,
+    database: getDBStatus(),
     serverSessionId: SERVER_SESSION_ID,
     bootedAt: SERVER_BOOTED_AT,
     date: new Date().toISOString(),
@@ -116,7 +152,7 @@ app.post("/api/text/analyze", (req, res) => {
 });
 
 // Auth Endpoints
-app.post("/api/auth/register", async (req, res) => {
+app.post("/api/auth/register", requireDB, async (req, res) => {
   try {
     const result = await registerUser(req.body);
     res.status(201).json({
@@ -128,7 +164,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", requireDB, async (req, res) => {
   try {
     const result = await loginUser(req.body);
     res.status(200).json({
@@ -144,12 +180,16 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
   res.status(200).json({ user: req.user });
 });
 
-app.post("/api/auth/logout", async (req, res) => {
+app.post("/api/auth/logout", requireDB, async (req, res, next) => {
   const token = getBearerToken(req);
-  if (token) {
-    await invalidateSession(token);
+  try {
+    if (token) {
+      await invalidateSession(token);
+    }
+    res.status(200).json({ ok: true });
+  } catch (error) {
+    next(error);
   }
-  res.status(200).json({ ok: true });
 });
 
 // Check-ins Endpoints
@@ -191,6 +231,17 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Internal Server Error", detail: err.message });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 SafeSpace server running at http://localhost:${PORT}`);
 });
+
+async function shutdown(signal) {
+  console.log(`${signal} received. Closing SafeSpace server...`);
+  server.close(async () => {
+    await mongoose.disconnect();
+    process.exit(0);
+  });
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
