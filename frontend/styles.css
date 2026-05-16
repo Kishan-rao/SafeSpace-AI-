@@ -494,6 +494,7 @@ textarea:focus {
 .mood-chart-card,
 .user-dashboard-card,
 .mood-calendar-card,
+.mood-checkin-card,
 .dashboard-summary-card,
 .dashboard-history-item,
 .crisis-panel,
@@ -763,6 +764,15 @@ textarea:focus {
 
 .mood-calendar-card {
   padding: 16px;
+  margin-bottom: 16px;
+}
+
+.mood-checkin-card {
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.mood-checkin-card .dashboard-header {
   margin-bottom: 16px;
 }
 
