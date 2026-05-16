@@ -9,6 +9,13 @@ const { connectDB, getDBStatus, isDBReady } = require("./backend/config/db");
 const { getMetricsSnapshot, metricsMiddleware } = require("./backend/metrics");
 const { createRateLimiter } = require("./backend/middleware/rate-limit");
 const { requestContext } = require("./backend/middleware/request-context");
+const {
+  asyncHandler,
+  createHttpError,
+  errorHandler,
+  notFoundHandler,
+  sendApiError,
+} = require("./backend/middleware/error-handler");
 
 const { analyzeExpression, MODEL_INFO } = require("./backend/expression-service");
 const { analyzeText, MODEL_INFO: TEXT_MODEL_INFO } = require("./backend/text-analysis-service");
@@ -80,21 +87,23 @@ function getBearerToken(request) {
 async function requireAuth(req, res, next) {
   try {
     if (!isDBReady()) {
-      return res.status(503).json({
-        error: "Database unavailable",
-        detail: "Authentication is temporarily unavailable because MongoDB is not connected.",
-        requestId: req.id,
-      });
+      return sendApiError(
+        req,
+        res,
+        503,
+        "Database unavailable",
+        "Authentication is temporarily unavailable because MongoDB is not connected."
+      );
     }
 
     const token = getBearerToken(req);
     if (!token) {
-      return res.status(401).json({ error: "Authentication required", requestId: req.id });
+      return sendApiError(req, res, 401, "Authentication required", "Sign in before using this endpoint.");
     }
 
     const user = await getUserForToken(token);
     if (!user) {
-      return res.status(401).json({ error: "Authentication required", requestId: req.id });
+      return sendApiError(req, res, 401, "Authentication required", "Your session is invalid or expired.");
     }
 
     req.token = token;
@@ -107,11 +116,13 @@ async function requireAuth(req, res, next) {
 
 function requireDB(req, res, next) {
   if (!isDBReady()) {
-    return res.status(503).json({
-      error: "Database unavailable",
-      detail: "This endpoint requires MongoDB. Check MONGODB_URI, Atlas network access, and credentials.",
-      requestId: req.id,
-    });
+    return sendApiError(
+      req,
+      res,
+      503,
+      "Database unavailable",
+      "This endpoint requires MongoDB. Check MONGODB_URI, Atlas network access, and credentials."
+    );
   }
 
   next();
@@ -189,33 +200,34 @@ app.get("/api/text/health", (req, res) => {
 });
 
 // Expression Analysis
-app.post("/api/expression/analyze", analysisRateLimiter, async (req, res, next) => {
-  try {
-    const result = await analyzeExpression(req.body, {
-      ip: getClientIp(req),
-      userAgent: req.headers["user-agent"] || null,
-    });
-    res.status(200).json(result);
-  } catch (error) {
-    if (error.type === "entity.too.large") {
-      return res.status(413).json({ error: "Expression analysis failed", detail: "Payload too large", requestId: req.id });
+app.post(
+  "/api/expression/analyze",
+  analysisRateLimiter,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await analyzeExpression(req.body, {
+        ip: getClientIp(req),
+        userAgent: req.headers["user-agent"] || null,
+      });
+      res.status(200).json(result);
+    } catch (error) {
+      throw createHttpError(400, "Expression analysis failed", error.message);
     }
-    res.status(400).json({ error: "Expression analysis failed", detail: error.message, requestId: req.id });
-  }
-});
+  })
+);
 
 // Text Analysis
-app.post("/api/text/analyze", analysisRateLimiter, (req, res) => {
+app.post("/api/text/analyze", analysisRateLimiter, (req, res, next) => {
   try {
     const result = analyzeText(req.body.text || "");
     res.status(200).json(result);
   } catch (error) {
-    res.status(400).json({ error: "Text analysis failed", detail: error.message, requestId: req.id });
+    next(createHttpError(400, "Text analysis failed", error.message));
   }
 });
 
 // Auth Endpoints
-app.post("/api/auth/register", authRateLimiter, requireDB, async (req, res) => {
+app.post("/api/auth/register", authRateLimiter, requireDB, asyncHandler(async (req, res) => {
   try {
     const result = await registerUser(req.body);
     res.status(201).json({
@@ -223,11 +235,11 @@ app.post("/api/auth/register", authRateLimiter, requireDB, async (req, res) => {
       token: result.session.token,
     });
   } catch (error) {
-    res.status(400).json({ error: error.message, requestId: req.id });
+    throw createHttpError(400, "Registration failed", error.message);
   }
-});
+}));
 
-app.post("/api/auth/login", authRateLimiter, requireDB, async (req, res) => {
+app.post("/api/auth/login", authRateLimiter, requireDB, asyncHandler(async (req, res) => {
   try {
     const result = await loginUser(req.body);
     res.status(200).json({
@@ -235,9 +247,9 @@ app.post("/api/auth/login", authRateLimiter, requireDB, async (req, res) => {
       token: result.session.token,
     });
   } catch (error) {
-    res.status(401).json({ error: error.message, requestId: req.id });
+    throw createHttpError(401, "Login failed", error.message);
   }
-});
+}));
 
 app.get("/api/auth/me", requireAuth, (req, res) => {
   res.status(200).json({ user: req.user });
@@ -256,30 +268,26 @@ app.post("/api/auth/logout", requireDB, async (req, res, next) => {
 });
 
 // Check-ins Endpoints
-app.get("/api/checkins", requireAuth, async (req, res, next) => {
-  try {
-    const result = await listCheckins(req.user.id, {
-      page: req.query.page,
-      limit: req.query.limit,
-      emotion: req.query.emotion,
-      risk: req.query.risk,
-      month: req.query.month,
-    });
-    res.status(200).json(result);
-  } catch (error) {
-    next(error);
-  }
-});
+app.get("/api/checkins", requireAuth, asyncHandler(async (req, res) => {
+  const result = await listCheckins(req.user.id, {
+    page: req.query.page,
+    limit: req.query.limit,
+    emotion: req.query.emotion,
+    risk: req.query.risk,
+    month: req.query.month,
+  });
+  res.status(200).json(result);
+}));
 
-app.post("/api/checkins", requireAuth, async (req, res, next) => {
+app.post("/api/checkins", requireAuth, asyncHandler(async (req, res) => {
   try {
     const checkin = await saveCheckin(req.user.id, req.body);
     const checkins = await listRecentCheckins(req.user.id, 5);
     res.status(201).json({ checkin, checkins });
   } catch (error) {
-    res.status(400).json({ error: error.message, requestId: req.id });
+    throw createHttpError(400, "Check-in could not be saved", error.message);
   }
-});
+}));
 
 // Catch-all route to serve the frontend single-page application fallback if needed
 app.use((req, res, next) => {
@@ -289,15 +297,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Global Error Handler
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({
-    error: "Internal Server Error",
-    detail: IS_PRODUCTION ? "An unexpected server error occurred." : err.message,
-    requestId: req.id,
-  });
-});
+app.use(notFoundHandler);
+app.use(errorHandler({ isProduction: IS_PRODUCTION }));
 
 const server = app.listen(PORT, () => {
   console.log(`🚀 SafeSpace server running at http://localhost:${PORT}`);
@@ -313,3 +314,10 @@ async function shutdown(signal) {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+  shutdown("uncaughtException");
+});

@@ -67,6 +67,7 @@ function createRateLimiter(options = {}) {
     if (bucket.count > max) {
       res.setHeader("Retry-After", String(resetSeconds));
       return res.status(429).json({
+        ok: false,
         error: "Rate limit exceeded",
         detail: message,
         retryAfterSeconds: resetSeconds,

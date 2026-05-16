@@ -461,6 +461,28 @@ function sanitizeText(text) {
   });
 }
 
+class ApiError extends Error {
+  constructor(message, { status = 0, detail = "", requestId = "" } = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+    this.requestId = requestId;
+  }
+}
+
+function getErrorMessage(error, fallback = "Something went wrong. Please try again.") {
+  if (error instanceof ApiError) {
+    return error.detail || error.message || fallback;
+  }
+
+  if (error?.name === "TypeError") {
+    return "The server could not be reached. Check that the backend is running, then try again.";
+  }
+
+  return error?.message || fallback;
+}
+
 async function apiRequest(url, options = {}, includeAuth = false) {
   const headers = {
     "Content-Type": "application/json",
@@ -471,14 +493,23 @@ async function apiRequest(url, options = {}, includeAuth = false) {
     headers.Authorization = `Bearer ${authToken}`;
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers,
+    });
+  } catch (error) {
+    throw new ApiError(getErrorMessage(error), { detail: getErrorMessage(error) });
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || `Request failed with ${response.status}`);
+    throw new ApiError(payload.error || `Request failed with ${response.status}`, {
+      status: response.status,
+      detail: payload.detail || payload.error || `Request failed with ${response.status}`,
+      requestId: payload.requestId || response.headers.get("X-Request-Id") || "",
+    });
   }
 
   return payload;
@@ -659,6 +690,7 @@ function renderDashboardEmptyState(message) {
   dashboardPaginationLabel.textContent = "Page 1 of 1";
   dashboardPreviousButton.disabled = true;
   dashboardNextButton.disabled = true;
+  setHistoryPaginationVisible(false);
 }
 
 function setHistoryPaginationVisible(isVisible) {
@@ -777,7 +809,11 @@ function renderUserDashboard(payload) {
 
   const hasSelectedHistoryFilter = Boolean(dashboardState.emotion || dashboardState.risk);
   if (!hasSelectedHistoryFilter) {
-    dashboardHistoryList.innerHTML = "";
+    dashboardHistoryList.innerHTML = `
+      <div class="dashboard-empty" role="status" aria-live="polite">
+        Select an emotion or risk filter to view history.
+      </div>
+    `;
     dashboardPaginationLabel.textContent = "";
     dashboardPreviousButton.disabled = true;
     dashboardNextButton.disabled = true;
@@ -863,7 +899,7 @@ async function loadCheckinsFromServer(options = {}) {
     renderUserDashboard(response);
   } catch (error) {
     console.error("Check-in history could not be loaded:", error);
-    renderDashboardEmptyState("Check-in history could not be loaded right now.");
+    renderDashboardEmptyState(getErrorMessage(error, "Check-in history could not be loaded right now."));
   }
 }
 
@@ -976,19 +1012,10 @@ function captureFrameSnapshot() {
 }
 
 async function analyzeExpressionOnServer(payload) {
-  const response = await fetch(expressionApiUrl, {
+  return apiRequest(expressionApiUrl, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
     body: JSON.stringify(payload),
   });
-
-  if (!response.ok) {
-    throw new Error(`Backend returned ${response.status}`);
-  }
-
-  return response.json();
 }
 
 function applyExpressionResult(result) {
@@ -1313,19 +1340,10 @@ function buildPersonalizedRecommendations(primaryEmotionKey, risk) {
 }
 
 async function analyzeTextOnServer(text) {
-  const response = await fetch(textAnalysisApiUrl, {
+  return apiRequest(textAnalysisApiUrl, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
     body: JSON.stringify({ text }),
   });
-
-  if (!response.ok) {
-    throw new Error(`Text analysis backend returned ${response.status}`);
-  }
-
-  return response.json();
 }
 
 function renderRecommendations(cards) {
@@ -1360,8 +1378,10 @@ async function applyAnalysis(expressionLabel = "Not captured yet", shouldTrack =
     result = await analyzeTextOnServer(emotionInput.value);
   } catch (error) {
     console.error("Text analysis failed:", error);
-    supportResponse.textContent =
-      "The text-analysis service is currently unavailable. Please try again after the backend is running.";
+    supportResponse.textContent = getErrorMessage(
+      error,
+      "The text-analysis service is currently unavailable. Please try again after the backend is running."
+    );
     renderCrisisSafety(null);
     return;
   }
@@ -1380,7 +1400,10 @@ async function applyAnalysis(expressionLabel = "Not captured yet", shouldTrack =
       await saveCheckinToServer(result, emotionInput.value, expressionLabel);
     } catch (error) {
       console.error("Check-in could not be saved:", error);
-      supportResponse.textContent = `${result.response} Sign in to save this check-in to your personal history.`;
+      supportResponse.textContent = `${result.response} ${getErrorMessage(
+        error,
+        "This check-in could not be saved right now."
+      )}`;
     }
     if (!authToken) {
       supportResponse.textContent = `${result.response} Sign in to save this check-in to your personal history.`;
@@ -1419,7 +1442,7 @@ async function handleAuthSubmit(event) {
     await loadCheckinsFromServer();
     closeAuthModal();
   } catch (error) {
-    authErrorMessage.textContent = error.message;
+    authErrorMessage.textContent = getErrorMessage(error);
     authErrorMessage.classList.remove("hidden");
   }
 }
