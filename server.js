@@ -31,6 +31,9 @@ const SERVER_BOOTED_AT = new Date().toISOString();
 const SERVER_SESSION_ID = `${process.pid}-${Date.now()}`;
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
+// FIX 1: Max check-in text length to prevent abuse (2MB body limit is too generous for plain text)
+const MAX_CHECKIN_TEXT_LENGTH = 2000;
+
 const apiRateLimiter = createRateLimiter({
   windowMs: Number(process.env.API_RATE_LIMIT_WINDOW_MS) || 60_000,
   max: Number(process.env.API_RATE_LIMIT_MAX) || 180,
@@ -58,11 +61,86 @@ app.set("trust proxy", process.env.TRUST_PROXY === "true" ? 1 : false);
 morgan.token("id", (req) => req.id);
 app.use(requestContext());
 app.use(metricsMiddleware());
-// Use helmet but configure it to allow local development functionality if needed
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors());
+
+// FIX 2: Enable Helmet with a proper Content Security Policy instead of disabling it.
+// This prevents XSS, clickjacking, and other injection attacks.
+// The directives below allow the fonts, CDN scripts (face-api), and your own API origin.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: [
+          "'self'",
+          // face-api.js loaded from jsDelivr CDN
+          "https://cdn.jsdelivr.net",
+        ],
+        styleSrc: [
+          "'self'",
+          // Google Fonts stylesheets
+          "https://fonts.googleapis.com",
+          // Allow inline styles used by the frontend
+          "'unsafe-inline'",
+        ],
+        fontSrc: [
+          "'self'",
+          // Google Fonts files
+          "https://fonts.gstatic.com",
+        ],
+        imgSrc: [
+          "'self'",
+          // Allow data: URLs for webcam canvas snapshots
+          "data:",
+        ],
+        connectSrc: [
+          "'self'",
+          // face-api model weights fetched from jsDelivr
+          "https://cdn.jsdelivr.net",
+        ],
+        mediaSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        upgradeInsecureRequests: IS_PRODUCTION ? [] : null,
+      },
+    },
+    // Prevent clickjacking
+    frameguard: { action: "deny" },
+    // Force HTTPS in production
+    hsts: IS_PRODUCTION
+      ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+      : false,
+  })
+);
+
+// FIX 3: Lock down CORS to only allow your own frontend origin.
+// Previously `cors()` with no options allowed ANY origin to call your API,
+// which means any malicious website could make authenticated requests on behalf of your users.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:3000")
+  .split(",")
+  .map((o) => o.trim());
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow server-to-server requests (no origin) and listed origins
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS: origin ${origin} is not allowed`));
+      }
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
+
 app.use(morgan(":id :method :url :status :response-time ms - :res[content-length]"));
-app.use(express.json({ limit: "2mb" }));
+
+// FIX 4: Reduce body size limit from 2mb to something reasonable for text check-ins.
+// 2mb was far too large and could be used to slow down the server with large payloads.
+// Expression frames (base64 JPEG) can be ~100-150kb, so 512kb is a safe ceiling.
+app.use(express.json({ limit: "512kb" }));
 app.use("/api", apiRateLimiter);
 
 // Serve static frontend files
@@ -124,13 +202,36 @@ function requireDB(req, res, next) {
       "This endpoint requires MongoDB. Check MONGODB_URI, Atlas network access, and credentials."
     );
   }
+  next();
+}
+
+// FIX 5: Add an admin/internal-only guard for sensitive endpoints like /api/metrics.
+// Without this, anyone on the internet can read your server internals, request counts,
+// route performance data, and database status.
+function requireInternalAccess(req, res, next) {
+  const adminKey = process.env.METRICS_API_KEY;
+
+  // If no key is configured, fall back to localhost-only access
+  if (!adminKey) {
+    const ip = getClientIp(req) || req.socket.remoteAddress || "";
+    const isLocal = ip === "::1" || ip === "127.0.0.1" || ip.startsWith("::ffff:127.");
+    if (!isLocal) {
+      return sendApiError(req, res, 403, "Forbidden", "Metrics endpoint is restricted.");
+    }
+    return next();
+  }
+
+  const provided = getBearerToken(req);
+  if (!provided || provided !== adminKey) {
+    return sendApiError(req, res, 403, "Forbidden", "Invalid or missing metrics API key.");
+  }
 
   next();
 }
 
 // ----- Routes -----
 
-// Health Endpoints
+// Health Endpoints (public — intentionally no auth)
 app.get("/api/health", (req, res) => {
   res.status(200).json({
     ok: true,
@@ -163,7 +264,8 @@ app.get("/api/ready", (req, res) => {
   });
 });
 
-app.get("/api/metrics", (req, res) => {
+// FIX 5 applied: /api/metrics is now restricted to localhost or valid API key
+app.get("/api/metrics", requireInternalAccess, (req, res) => {
   res.status(200).json({
     ok: true,
     service: "safespace-backend",
@@ -217,9 +319,24 @@ app.post(
 );
 
 // Text Analysis
+// FIX 6: Validate text length before running analysis.
+// Without this, someone could POST a 512kb string and run your full NLP pipeline on it
+// on every request, wasting CPU and slowing responses for real users.
 app.post("/api/text/analyze", analysisRateLimiter, (req, res, next) => {
   try {
-    const result = analyzeText(req.body.text || "");
+    const text = String(req.body.text || "");
+
+    if (text.length > MAX_CHECKIN_TEXT_LENGTH) {
+      return next(
+        createHttpError(
+          400,
+          "Text too long",
+          `Check-in text must be ${MAX_CHECKIN_TEXT_LENGTH} characters or fewer.`
+        )
+      );
+    }
+
+    const result = analyzeText(text);
     res.status(200).json(result);
   } catch (error) {
     next(createHttpError(400, "Text analysis failed", error.message));
@@ -279,8 +396,21 @@ app.get("/api/checkins", requireAuth, asyncHandler(async (req, res) => {
   res.status(200).json(result);
 }));
 
+// FIX 6 also applied here: validate text length on save, not just on analysis.
+// A user could bypass the analyze endpoint and POST directly to /api/checkins
+// with an arbitrarily long text string.
 app.post("/api/checkins", requireAuth, asyncHandler(async (req, res) => {
   try {
+    const text = String(req.body.text || "");
+
+    if (text.length > MAX_CHECKIN_TEXT_LENGTH) {
+      throw createHttpError(
+        400,
+        "Text too long",
+        `Check-in text must be ${MAX_CHECKIN_TEXT_LENGTH} characters or fewer.`
+      );
+    }
+
     const checkin = await saveCheckin(req.user.id, req.body);
     const checkins = await listRecentCheckins(req.user.id, 5);
     res.status(201).json({ checkin, checkins });
@@ -304,11 +434,26 @@ const server = app.listen(PORT, () => {
   console.log(`🚀 SafeSpace server running at http://localhost:${PORT}`);
 });
 
+// FIX 7: Graceful shutdown now has a forced exit timeout.
+// Previously if mongoose.disconnect() hung, the process would never exit.
+// This adds a 10 second hard timeout as a safety net.
 async function shutdown(signal) {
   console.log(`${signal} received. Closing SafeSpace server...`);
   server.close(async () => {
-    await mongoose.disconnect();
-    process.exit(0);
+    const forceExitTimer = setTimeout(() => {
+      console.error("Graceful shutdown timed out. Forcing exit.");
+      process.exit(1);
+    }, 10_000);
+
+    try {
+      await mongoose.disconnect();
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+    } catch (error) {
+      console.error("Error during shutdown:", error);
+      clearTimeout(forceExitTimer);
+      process.exit(1);
+    }
   });
 }
 
