@@ -251,6 +251,7 @@ h4 {
 }
 
 .dashboard-panel,
+.mood-checkin-panel,
 .recommendations-panel,
 .support-panel {
   grid-column: span 12;
@@ -494,7 +495,6 @@ textarea:focus {
 .mood-chart-card,
 .user-dashboard-card,
 .mood-calendar-card,
-.mood-checkin-card,
 .dashboard-summary-card,
 .dashboard-history-item,
 .crisis-panel,
@@ -767,15 +767,6 @@ textarea:focus {
   margin-bottom: 16px;
 }
 
-.mood-checkin-card {
-  padding: 16px;
-  margin-top: 16px;
-}
-
-.mood-checkin-card .dashboard-header {
-  margin-bottom: 16px;
-}
-
 .mood-calendar-weekdays,
 .mood-calendar-grid {
   display: grid;
@@ -848,6 +839,25 @@ textarea:focus {
 .dashboard-history-list {
   display: grid;
   gap: 10px;
+  max-height: 560px;
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(202, 109, 63, 0.55) rgba(255, 248, 241, 0.7);
+}
+
+.dashboard-history-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.dashboard-history-list::-webkit-scrollbar-track {
+  background: rgba(255, 248, 241, 0.7);
+  border-radius: 999px;
+}
+
+.dashboard-history-list::-webkit-scrollbar-thumb {
+  background: rgba(202, 109, 63, 0.55);
+  border-radius: 999px;
 }
 
 .dashboard-history-item {
@@ -1122,6 +1132,7 @@ textarea:focus {
   .input-panel,
   .webcam-panel,
   .dashboard-panel,
+  .mood-checkin-panel,
   .recommendations-panel,
   .support-panel {
     grid-column: span 12;

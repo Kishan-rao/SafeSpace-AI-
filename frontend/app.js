@@ -25,6 +25,7 @@ const supportResponse = document.getElementById("supportResponse");
 const moodBars = document.getElementById("moodBars");
 const moodTrendMeta = document.getElementById("moodTrendMeta");
 const userDashboardCard = document.getElementById("userDashboardCard");
+const moodCheckinPanel = document.getElementById("moodCheckinPanel");
 const dashboardPageSummary = document.getElementById("dashboardPageSummary");
 const dashboardTotalEntries = document.getElementById("dashboardTotalEntries");
 const dashboardAverageSentiment = document.getElementById("dashboardAverageSentiment");
@@ -96,7 +97,7 @@ let authMode = "login";
 let authToken = localStorage.getItem(authTokenStorageKey) || "";
 let dashboardState = {
   page: 1,
-  limit: 20,
+  limit: 50,
   totalPages: 1,
   emotion: "",
   risk: "",
@@ -529,6 +530,7 @@ function applyAuthState() {
   openAuthButton.classList.toggle("hidden", isSignedIn);
   logoutButton.classList.toggle("hidden", !isSignedIn);
   userDashboardCard.classList.toggle("hidden", !isSignedIn);
+  moodCheckinPanel.classList.toggle("hidden", !isSignedIn);
   if (!isSignedIn) {
     renderDashboardEmptyState("Sign in to view saved check-ins and dashboard history.");
   }
@@ -628,7 +630,7 @@ function renderSentimentTrend() {
     .join("");
 }
 
-function buildCheckinsUrl({ page = 1, limit = 20, emotion = "", risk = "" } = {}) {
+function buildCheckinsUrl({ page = 1, limit = 50, emotion = "", risk = "" } = {}) {
   const params = new URLSearchParams({
     page: String(page),
     limit: String(limit),
@@ -657,6 +659,13 @@ function renderDashboardEmptyState(message) {
   dashboardPaginationLabel.textContent = "Page 1 of 1";
   dashboardPreviousButton.disabled = true;
   dashboardNextButton.disabled = true;
+}
+
+function setHistoryPaginationVisible(isVisible) {
+  const pagination = dashboardPreviousButton.closest(".dashboard-pagination");
+  if (pagination) {
+    pagination.classList.toggle("hidden", !isVisible);
+  }
 }
 
 function getCalendarStressClass(stress) {
@@ -764,10 +773,22 @@ function renderUserDashboard(payload) {
   dashboardAverageStress.textContent = `${Math.round(summary.averageStress || 0)} / 100`;
   dashboardCommonEmotion.textContent = summary.mostCommonEmotion || "None yet";
   dashboardPageSummary.textContent = `${pagination.total || 0} saved entries`;
+  renderMoodCalendar(payload.calendar || payload.trend || []);
+
+  const hasSelectedHistoryFilter = Boolean(dashboardState.emotion || dashboardState.risk);
+  if (!hasSelectedHistoryFilter) {
+    dashboardHistoryList.innerHTML = "";
+    dashboardPaginationLabel.textContent = "";
+    dashboardPreviousButton.disabled = true;
+    dashboardNextButton.disabled = true;
+    setHistoryPaginationVisible(false);
+    return;
+  }
+
+  setHistoryPaginationVisible(true);
   dashboardPaginationLabel.textContent = `Page ${pagination.page} of ${pagination.totalPages}`;
   dashboardPreviousButton.disabled = !pagination.hasPreviousPage;
   dashboardNextButton.disabled = !pagination.hasNextPage;
-  renderMoodCalendar(payload.calendar || payload.trend || []);
 
   if (!checkins.length) {
     dashboardHistoryList.innerHTML = `
@@ -1417,7 +1438,7 @@ async function handleLogout() {
   setSentimentHistory([]);
   dashboardState = {
     page: 1,
-    limit: 20,
+    limit: 50,
     totalPages: 1,
     emotion: "",
     risk: "",

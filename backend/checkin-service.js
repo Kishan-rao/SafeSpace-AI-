@@ -157,7 +157,6 @@ async function listCheckins(userId, options = {}) {
   const query = buildCheckinQuery(userId, options);
   const calendarRange = getCalendarRange(options.month);
   const calendarQuery = buildCheckinQuery(userId, {
-    ...options,
     from: calendarRange.start,
     to: calendarRange.end,
   });

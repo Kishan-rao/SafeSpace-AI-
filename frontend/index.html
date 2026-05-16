@@ -257,7 +257,7 @@
             <div class="dashboard-header">
               <div>
                 <span class="section-label">Account Dashboard</span>
-                <h4>Your check-in history</h4>
+                <h4>Your mood calendar</h4>
               </div>
               <span class="small-note" id="dashboardPageSummary">Sign in to view saved entries</span>
             </div>
@@ -281,36 +281,6 @@
               </article>
             </div>
 
-            <div class="dashboard-filter-row">
-              <label class="dashboard-filter">
-                <span>Emotion</span>
-                <select id="dashboardEmotionFilter">
-                  <option value="">All emotions</option>
-                  <option value="Calm">Calm</option>
-                  <option value="Joy">Joy</option>
-                  <option value="Hopeful">Hopeful</option>
-                  <option value="Focused">Focused</option>
-                  <option value="Neutral">Neutral</option>
-                  <option value="Fatigue">Fatigue</option>
-                  <option value="Sadness">Sadness</option>
-                  <option value="Anxiety">Anxiety</option>
-                  <option value="Stress">Stress</option>
-                  <option value="Anger">Anger</option>
-                  <option value="Fear">Fear</option>
-                  <option value="Overwhelm">Overwhelm</option>
-                </select>
-              </label>
-              <label class="dashboard-filter">
-                <span>Risk</span>
-                <select id="dashboardRiskFilter">
-                  <option value="">All risk levels</option>
-                  <option value="Low">Low</option>
-                  <option value="Moderate">Moderate</option>
-                  <option value="High">High</option>
-                </select>
-              </label>
-            </div>
-
             <div class="mood-calendar-card">
               <div class="dashboard-header">
                 <div>
@@ -330,24 +300,54 @@
               </div>
               <div class="mood-calendar-grid" id="moodCalendarGrid"></div>
             </div>
+          </div>
+        </section>
 
-            <div class="mood-checkin-card">
-              <div class="dashboard-header">
-                <div>
-                  <span class="section-label">Mood Check-In</span>
-                  <h4>History of emotions</h4>
-                </div>
-                <span class="small-note">Saved entries from your check-ins</span>
-              </div>
-
-              <div class="dashboard-history-list" id="dashboardHistoryList"></div>
-
-              <div class="dashboard-pagination">
-                <button class="ghost-button" id="dashboardPreviousButton" type="button">Previous</button>
-                <span id="dashboardPaginationLabel">Page 1 of 1</span>
-                <button class="ghost-button" id="dashboardNextButton" type="button">Next</button>
-              </div>
+        <section class="panel mood-checkin-panel hidden" id="moodCheckinPanel">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">Mood Check-in</p>
+              <h3>Past check-in records</h3>
             </div>
+            <span class="small-note">Scrollable history of saved emotional check-ins</span>
+          </div>
+
+          <div class="dashboard-filter-row">
+            <label class="dashboard-filter">
+              <span>Emotion</span>
+              <select id="dashboardEmotionFilter">
+                <option value="">Select</option>
+                <option value="Calm">Calm</option>
+                <option value="Joy">Joy</option>
+                <option value="Hopeful">Hopeful</option>
+                <option value="Focused">Focused</option>
+                <option value="Neutral">Neutral</option>
+                <option value="Fatigue">Fatigue</option>
+                <option value="Sadness">Sadness</option>
+                <option value="Anxiety">Anxiety</option>
+                <option value="Stress">Stress</option>
+                <option value="Anger">Anger</option>
+                <option value="Fear">Fear</option>
+                <option value="Overwhelm">Overwhelm</option>
+              </select>
+            </label>
+            <label class="dashboard-filter">
+              <span>Risk</span>
+              <select id="dashboardRiskFilter">
+                <option value="">Select</option>
+                <option value="Low">Low</option>
+                <option value="Moderate">Moderate</option>
+                <option value="High">High</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="dashboard-history-list" id="dashboardHistoryList"></div>
+
+          <div class="dashboard-pagination">
+            <button class="ghost-button" id="dashboardPreviousButton" type="button">Previous</button>
+            <span id="dashboardPaginationLabel">Page 1 of 1</span>
+            <button class="ghost-button" id="dashboardNextButton" type="button">Next</button>
           </div>
         </section>
 
