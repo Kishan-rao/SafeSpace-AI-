@@ -1,5 +1,3 @@
-require("dotenv").config();
-
 const Groq = require("groq-sdk");
 const { analyzeCrisisSafety, enrichSafetyForRisk } = require("./crisis-safety-service");
 
