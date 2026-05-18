@@ -322,26 +322,24 @@ app.post(
 // FIX 6: Validate text length before running analysis.
 // Without this, someone could POST a 512kb string and run your full NLP pipeline on it
 // on every request, wasting CPU and slowing responses for real users.
-app.post("/api/text/analyze", analysisRateLimiter, (req, res, next) => {
-  try {
+app.post(
+  "/api/text/analyze",
+  analysisRateLimiter,
+  asyncHandler(async (req, res) => {
     const text = String(req.body.text || "");
 
     if (text.length > MAX_CHECKIN_TEXT_LENGTH) {
-      return next(
-        createHttpError(
-          400,
-          "Text too long",
-          `Check-in text must be ${MAX_CHECKIN_TEXT_LENGTH} characters or fewer.`
-        )
+      throw createHttpError(
+        400,
+        "Text too long",
+        `Check-in text must be ${MAX_CHECKIN_TEXT_LENGTH} characters or fewer.`
       );
     }
 
-    const result = analyzeText(text);
+    const result = await analyzeText(text);
     res.status(200).json(result);
-  } catch (error) {
-    next(createHttpError(400, "Text analysis failed", error.message));
-  }
-});
+  })
+);
 
 // Auth Endpoints
 app.post("/api/auth/register", authRateLimiter, requireDB, asyncHandler(async (req, res) => {

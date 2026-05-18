@@ -15,6 +15,11 @@ const CRISIS_PHRASES = [
   "unsafe",
 ];
 
+const TELE_MANAS_GUIDANCE =
+  "Call Tele-MANAS (14416) for immediate mental health support in India";
+
+const TELE_MANAS_ACTION = TELE_MANAS_GUIDANCE;
+
 const SEVERE_DISTRESS_PHRASES = [
   "hopeless",
   "worthless",
@@ -67,23 +72,64 @@ function analyzeCrisisSafety(text, context = {}) {
     matchedSignals: [...new Set([...crisisMatches, ...distressMatches])],
     guidance:
       level === "crisis"
-        ? "If you may be in immediate danger, contact local emergency services now. If you are in the U.S. or Canada, call or text 988 for crisis support."
+        ? `${TELE_MANAS_GUIDANCE}. If you may be in immediate danger, contact local emergency services now.`
         : level === "elevated"
-          ? "This check-in shows elevated distress. Consider reaching out to a trusted person or professional support today."
+          ? TELE_MANAS_GUIDANCE
           : level === "watch"
-            ? "This check-in shows strain. Keep the next step small and check in again soon."
+            ? TELE_MANAS_GUIDANCE
             : "No crisis escalation signals were detected in this check-in.",
     actions:
       level === "crisis"
-        ? ["Call or text 988 if available in your region", "Contact local emergency services if you are in immediate danger", "Move near another person or trusted contact"]
+        ? [
+            TELE_MANAS_ACTION,
+            "Contact local emergency services if you are in immediate danger",
+            "Move near another person or trusted contact",
+          ]
         : level === "elevated"
-          ? ["Message a trusted person", "Use a short grounding exercise", "Consider professional support"]
+          ? [TELE_MANAS_ACTION, "Message a trusted person", "Use a short grounding exercise"]
           : level === "watch"
-            ? ["Take a brief reset", "Reduce your next task to one step", "Check in again later"]
+            ? [TELE_MANAS_ACTION, "Take a brief reset", "Check in again later"]
             : [],
   };
 }
 
+function enrichSafetyForRisk(safety, risk) {
+  if (risk !== "Moderate" && risk !== "High") {
+    return safety;
+  }
+
+  const enriched = {
+    ...safety,
+    guidance: TELE_MANAS_GUIDANCE,
+    actions: [TELE_MANAS_ACTION],
+  };
+
+  if (risk === "High") {
+    enriched.level = safety.level === "crisis" ? "crisis" : "elevated";
+    enriched.escalation = safety.level === "crisis" ? "immediate" : "strong-support";
+    enriched.isCrisis = safety.level === "crisis" || safety.isCrisis;
+
+    if (enriched.level === "crisis") {
+      enriched.actions = [
+        TELE_MANAS_ACTION,
+        "Contact local emergency services if you are in immediate danger",
+        "Move near another person or trusted contact",
+      ];
+    } else {
+      enriched.actions = [TELE_MANAS_ACTION, "Message a trusted person", "Reach out to someone you trust today"];
+    }
+  } else {
+    enriched.level = safety.level === "none" ? "elevated" : safety.level;
+    enriched.escalation = safety.level === "crisis" ? safety.escalation : "strong-support";
+    enriched.isCrisis = safety.isCrisis;
+    enriched.actions = [TELE_MANAS_ACTION, "Message a trusted person", "Consider professional support today"];
+  }
+
+  return enriched;
+}
+
 module.exports = {
   analyzeCrisisSafety,
+  enrichSafetyForRisk,
+  TELE_MANAS_GUIDANCE,
 };

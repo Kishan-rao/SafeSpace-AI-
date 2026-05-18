@@ -1,9 +1,16 @@
-const { analyzeCrisisSafety } = require("./crisis-safety-service");
+require("dotenv").config();
+
+const Groq = require("groq-sdk");
+const { analyzeCrisisSafety, enrichSafetyForRisk } = require("./crisis-safety-service");
+
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const GROQ_TIMEOUT_MS = Number(process.env.GROQ_TIMEOUT_MS) || 15_000;
+const GROQ_TEMPERATURE = 0.3;
 
 const MODEL_INFO = {
-  id: "safespace-nlp-service",
+  id: GROQ_MODEL,
   version: "1.0.0",
-  mode: "hosted-nlp-microservice",
+  mode: "groq-llm",
 };
 
 const EMOTION_MODEL_CATALOG = [
@@ -21,494 +28,339 @@ const EMOTION_MODEL_CATALOG = [
   { key: "overwhelm", label: "Overwhelm" },
 ];
 
-const POSITIVE_EMOTION_KEYS = new Set(["calm", "joy", "hopeful", "focused"]);
+const EMOTION_KEYS = EMOTION_MODEL_CATALOG.map((emotion) => emotion.key);
+const EMOTION_KEY_SET = new Set(EMOTION_KEYS);
+const VALID_RISK_LEVELS = new Set(["Low", "Moderate", "High"]);
 
-const EMOTION_PROTOTYPES = {
-  calm: "steady grounded settled peaceful breathing relaxed safe centered composed slow",
-  joy: "happy joyful delighted excited grateful smiling optimistic bright wonderful amazing uplifted",
-  hopeful: "hopeful encouraged improving progress healing resilient optimistic tomorrow can manage",
-  focused: "focused clear productive organized prepared engaged discipline momentum on track",
-  neutral: "okay fine normal manageable stable average ordinary balanced",
-  fatigue: "tired exhausted drained sleepy worn out burnout low energy depleted foggy",
-  sadness: "sad lonely empty hopeless tearful hurt down numb grieving depressed",
-  anxiety: "anxious nervous restless racing thoughts panic overthinking uneasy on edge worried",
-  stress: "stressed pressure deadlines overloaded tense strained workload demand crunch",
-  anger: "angry frustrated irritated annoyed resentful furious upset unfair conflict",
-  fear: "afraid scared fearful unsafe dread terrified vulnerable threatened uncertain",
-  overwhelm: "overwhelmed flooded too much cannot cope cant cope drowning spiraling overloaded stuck",
-};
-
-const TOKEN_WEIGHTS = {
-  amazing: 2.4,
-  angry: -2.4,
-  annoyed: -1.8,
-  anxious: -2.3,
-  burnout: -2.4,
-  calm: 2.2,
-  confident: 2.1,
-  cope: -0.6,
-  deadline: -1.4,
-  deadlines: -1.7,
-  delighted: 2.3,
-  depressed: -2.8,
-  disconnected: -1.5,
-  drained: -2.1,
-  empty: -2.6,
-  exhausted: -2.4,
-  fine: 0.2,
-  focused: 1.7,
-  frustrated: -2.1,
-  furious: -2.8,
-  grateful: 2.0,
-  grounded: 1.8,
-  happy: 2.2,
-  hopeless: -3.1,
-  hurt: -1.9,
-  irritated: -2.0,
-  joy: 2.5,
-  lonely: -2.3,
-  low: -0.9,
-  manageable: 0.8,
-  nervous: -1.9,
-  okay: 0.4,
-  overwhelmed: -2.8,
-  panic: -3.0,
-  peaceful: 2.0,
-  pressure: -1.9,
-  productive: 1.3,
-  progress: 1.2,
-  racing: -1.1,
-  relaxed: 1.8,
-  restless: -1.7,
-  sad: -2.3,
-  safe: 1.4,
-  scared: -2.4,
-  steady: 1.5,
-  stressed: -2.5,
-  support: 0.9,
-  tired: -1.8,
-  unsafe: -3.1,
-  worried: -2.0,
-  worthless: -3.2,
-};
-
-const PHRASE_WEIGHTS = {
-  "at peace": 2.2,
-  "burned out": -2.6,
-  "cannot cope": -3.2,
-  "can't cope": -3.2,
-  "feel okay": 0.9,
-  "hard to switch off": -1.8,
-  "low mood": -2.2,
-  "mental overload": -2.4,
-  "not sleeping": -1.8,
-  "on edge": -2.0,
-  "panic attack": -3.3,
-  "racing thoughts": -2.5,
-  "screen off": 0.8,
-  "self harm": -4.4,
-  "want to die": -5.0,
-};
-
-const NEGATORS = new Set(["no", "not", "never", "hardly", "barely", "cannot", "cant", "don't", "dont", "isn't", "isnt"]);
-const INTENSIFIERS = new Set(["very", "really", "extremely", "deeply", "totally", "so", "super", "severely"]);
-
-const SEVERE_RISK_PHRASES = [
-  "hopeless",
-  "worthless",
-  "can't cope",
-  "cannot cope",
-  "unsafe",
-  "give up",
-  "suicidal",
-  "self harm",
-  "want to die",
-  "don't want to live",
-  "end it all",
-  "end my life",
+const DEFAULT_RECOMMENDATIONS = [
+  {
+    tag: "Neutral",
+    title: "State check",
+    text: "Pause for one minute and notice whether your body feels tense, tired, or steady right now.",
+  },
+  {
+    tag: "Care",
+    title: "Gentle reset",
+    text: "Take a brief break, hydrate, and choose one small action that would make the next hour easier.",
+  },
 ];
 
-const RECOMMENDATION_LIBRARY = {
-  high: [
-    {
-      tag: "Breathing",
-      title: "4-6 calming breath cycle",
-      text: "Inhale for 4 seconds, exhale for 6 seconds, and repeat for 3 minutes to lower physical tension.",
-    },
-    {
-      tag: "Music",
-      title: "Lo-fi or soft piano focus mix",
-      text: "Choose slow instrumental music with low intensity to reduce overstimulation during anxious moments.",
-    },
-    {
-      tag: "Reading",
-      title: "Gentle reflective book",
-      text: "Try a comforting, low-pressure read such as short essays or reflective fiction that does not demand heavy focus.",
-    },
-    {
-      tag: "Reset",
-      title: "Screen-off recovery routine",
-      text: "Step away for 10 minutes, hydrate, stretch your shoulders, and look away from your devices before returning to work.",
-    },
-  ],
-  medium: [
-    {
-      tag: "Routine",
-      title: "Structured micro-break plan",
-      text: "Use a 25-minute focus block followed by a 5-minute reset with breathing or a short walk.",
-    },
-    {
-      tag: "Audio",
-      title: "Nature or ambient playlist",
-      text: "Rain sounds, ocean ambience, or acoustic playlists can make concentration feel less strained.",
-    },
-    {
-      tag: "Movies",
-      title: "Lighthearted comfort watch",
-      text: "Pick a familiar feel-good movie or series episode that feels emotionally safe and relaxing.",
-    },
-    {
-      tag: "Mindset",
-      title: "Thought download journal",
-      text: "Write down worries in short bullet points, then circle only the ones that need action today.",
-    },
-  ],
-  low: [
-    {
-      tag: "Balance",
-      title: "Mood maintenance walk",
-      text: "A short outdoor walk with no notifications can help preserve calm and prevent stress build-up.",
-    },
-    {
-      tag: "Focus",
-      title: "Positive playlist rotation",
-      text: "Keep a small personal playlist of grounding songs ready for transitions between work and rest.",
-    },
-    {
-      tag: "Reading",
-      title: "Inspirational short read",
-      text: "Choose uplifting articles or a few pages of a meaningful book to maintain emotional steadiness.",
-    },
-    {
-      tag: "Care",
-      title: "Daily gratitude prompt",
-      text: "Write one thing that felt difficult and one thing that still went well today to keep perspective balanced.",
-    },
-  ],
-};
+let groqClient = null;
 
-const EMOTION_RECOMMENDATION_LIBRARY = {
-  anxiety: [
-    { tag: "Anxiety", title: "5-4-3-2-1 grounding", text: "Name 5 things you see, 4 you feel, 3 you hear, 2 you smell, and 1 you taste to interrupt anxious spirals." },
-    { tag: "Anxiety", title: "Worry container note", text: "Write each worry once, then choose one action now and postpone the rest for later review." },
-  ],
-  stress: [
-    { tag: "Stress", title: "Single-task sprint", text: "Pick one smallest next step and do only that for 12 minutes with all notifications silenced." },
-    { tag: "Stress", title: "Body tension reset", text: "Unclench jaw, drop shoulders, and do 30 seconds of slow neck and wrist stretches." },
-  ],
-  overwhelm: [
-    { tag: "Overwhelm", title: "Three-item triage", text: "List everything, then keep only 3 essentials for today and defer the rest guilt-free." },
-    { tag: "Overwhelm", title: "Cognitive unload", text: "Speak your thoughts into a quick voice note to release mental load before planning." },
-  ],
-  sadness: [
-    { tag: "Mood", title: "Compassion check-in", text: "Write one kind sentence to yourself exactly like you would support a close friend." },
-    { tag: "Mood", title: "Low-energy activation", text: "Do one tiny action: shower, sunlight by window, or a 5-minute walk with no pressure." },
-  ],
-  fatigue: [
-    { tag: "Energy", title: "20-minute recharge", text: "Take a short rest break, hydrate, and avoid screens for a focused nervous-system reset." },
-    { tag: "Energy", title: "Energy budgeting", text: "Move one non-urgent task to tomorrow and protect your remaining energy for essentials." },
-  ],
-  anger: [
-    { tag: "Anger", title: "Pause before response", text: "Delay sending messages for 10 minutes, then re-read with a calmer tone and clear ask." },
-    { tag: "Anger", title: "Heat discharge walk", text: "Walk briskly for a few minutes to reduce physiological arousal before problem-solving." },
-  ],
-  fear: [
-    { tag: "Fear", title: "Safety anchoring", text: "Name what is safe right now in your environment and what support is currently available." },
-    { tag: "Fear", title: "Fact vs story list", text: "Split concerns into facts and assumptions, then act only on confirmed facts first." },
-  ],
-  joy: [
-    { tag: "Joy", title: "Savoring pause", text: "Take 60 seconds to name what is going well so your brain stores this positive state longer." },
-    { tag: "Joy", title: "Share the uplift", text: "Send one appreciation message to someone; prosocial moments help sustain positive mood." },
-  ],
-  hopeful: [
-    { tag: "Hope", title: "Momentum plan", text: "Capture one realistic next step for today to keep progress aligned with your hopeful state." },
-    { tag: "Hope", title: "Strength reflection", text: "Write one challenge you handled recently and what strength helped you through it." },
-  ],
-  calm: [
-    { tag: "Calm", title: "Protect the baseline", text: "Keep this calm by maintaining one boundary today: breaks, notifications, or workload limits." },
-    { tag: "Calm", title: "Quiet focus block", text: "Use a distraction-free 30-minute block to make progress while your mind is settled." },
-  ],
-  focused: [
-    { tag: "Focus", title: "Deep-work block", text: "Run one 45-minute focused session on your highest-impact task, then recover for 10 minutes." },
-    { tag: "Focus", title: "Completion cue", text: "Define a clear done-state before you begin so effort turns into visible completion." },
-  ],
-  neutral: [
-    { tag: "Neutral", title: "State check", text: "Pause for one minute and ask whether your body feels tense, tired, or steady right now." },
-    { tag: "Neutral", title: "Preventive reset", text: "Take a brief movement and hydration break to prevent gradual stress build-up later." },
-  ],
-};
+function getGroqClient() {
+  if (!process.env.GROQ_API_KEY) {
+    return null;
+  }
 
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
+  if (!groqClient) {
+    groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  }
+
+  return groqClient;
+}
+
+function clampNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(Math.max(parsed, min), max);
+}
+
+function clampSignal(value) {
+  return clampNumber(value, 0, 1, 0);
+}
+
+function asString(value, fallback) {
+  const safe = String(value ?? "").trim();
+  return safe || fallback;
 }
 
 function normalizeText(text) {
-  return (text || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9'\s]/g, " ")
+  return String(text || "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function tokenize(text) {
-  return normalizeText(text).split(" ").filter(Boolean);
+function getEmotionLabel(key) {
+  return EMOTION_MODEL_CATALOG.find((emotion) => emotion.key === key)?.label || "Neutral";
 }
 
-function simpleStem(token) {
-  return token
-    .replace(/'s$/g, "")
-    .replace(/ing$/g, "")
-    .replace(/ed$/g, "")
-    .replace(/ly$/g, "")
-    .replace(/ies$/g, "y")
-    .replace(/s$/g, "");
-}
+function normalizeEmotionSignals(raw = {}) {
+  const normalized = {};
 
-function buildVector(text) {
-  const vector = {};
-  tokenize(text).forEach((token) => {
-    const stemmed = simpleStem(token);
-    vector[stemmed] = (vector[stemmed] || 0) + 1;
-  });
-  return vector;
-}
-
-function dotProduct(left, right) {
-  let total = 0;
-  Object.keys(left).forEach((key) => {
-    total += (left[key] || 0) * (right[key] || 0);
-  });
-  return total;
-}
-
-function magnitude(vector) {
-  return Math.sqrt(Object.values(vector).reduce((sum, value) => sum + value * value, 0));
-}
-
-function cosineSimilarity(left, right) {
-  const denominator = magnitude(left) * magnitude(right);
-  if (!denominator) {
-    return 0;
-  }
-  return dotProduct(left, right) / denominator;
-}
-
-function countPhraseHits(text, phrases) {
-  return phrases.reduce((total, phrase) => total + (text.includes(phrase) ? 1 : 0), 0);
-}
-
-function buildEmotionSignals(normalizedText, tokens) {
-  const docVector = buildVector(normalizedText);
-  const signals = {};
-
-  EMOTION_MODEL_CATALOG.forEach((emotion) => {
-    const prototypeVector = buildVector(EMOTION_PROTOTYPES[emotion.key]);
-    const similarity = cosineSimilarity(docVector, prototypeVector);
-    const directHits = tokens.reduce((total, token) => total + (prototypeVector[token] || 0), 0);
-    signals[emotion.key] = Number((similarity * 5.2 + directHits * 0.22).toFixed(4));
+  EMOTION_KEYS.forEach((key) => {
+    normalized[key] = Number(clampSignal(raw[key]).toFixed(4));
   });
 
-  if (Object.values(signals).every((value) => value === 0)) {
-    signals.neutral = 1;
+  if (Object.values(normalized).every((value) => value === 0)) {
+    normalized.neutral = 1;
   }
 
-  return signals;
+  return normalized;
 }
 
-function getDominantEmotionKey(emotionSignals) {
-  return Object.entries(emotionSignals).sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral";
+function resolvePrimaryEmotionKey(key, signals) {
+  const candidate = asString(key, "").toLowerCase();
+  if (EMOTION_KEY_SET.has(candidate)) {
+    return candidate;
+  }
+
+  const ranked = Object.entries(signals).sort((a, b) => b[1] - a[1]);
+  return ranked[0]?.[0] || "neutral";
 }
 
-function dampenContradictoryPositiveSignals(emotionSignals, context) {
-  const sentiment = Number(context.sentiment) || 0;
-  const stress = Number(context.stress) || 0;
-  const highDistress = context.risk === "High" || stress >= 70 || sentiment <= 25;
-  const moderateDistress = context.risk === "Moderate" || stress >= 45 || sentiment <= 42;
-  const hasExplicitPositiveLanguage = context.positiveHits > 0;
-  const multiplier = highDistress ? (hasExplicitPositiveLanguage ? 0.35 : 0) : moderateDistress ? 0.35 : 1;
-
-  if (multiplier === 1) {
-    return emotionSignals;
+function asRecommendationArray(value) {
+  if (!Array.isArray(value)) {
+    return [...DEFAULT_RECOMMENDATIONS];
   }
 
-  const adjustedSignals = { ...emotionSignals };
-  POSITIVE_EMOTION_KEYS.forEach((key) => {
-    adjustedSignals[key] = Number(((adjustedSignals[key] || 0) * multiplier).toFixed(4));
-  });
+  const recommendations = value
+    .map((item) => ({
+      tag: asString(item?.tag, "Support"),
+      title: asString(item?.title, "Supportive step"),
+      text: asString(item?.text, "Choose one small, manageable action that supports your wellbeing right now."),
+    }))
+    .filter((item) => item.title && item.text)
+    .slice(0, 4);
 
-  return adjustedSignals;
+  return recommendations.length > 0 ? recommendations : [...DEFAULT_RECOMMENDATIONS];
 }
 
-function buildRecommendations(primaryEmotionKey, risk) {
-  const riskKey = risk === "High" ? "high" : risk === "Moderate" ? "medium" : "low";
-  const emotionCards = EMOTION_RECOMMENDATION_LIBRARY[primaryEmotionKey] || EMOTION_RECOMMENDATION_LIBRARY.neutral;
-  const riskCards = RECOMMENDATION_LIBRARY[riskKey] || RECOMMENDATION_LIBRARY.low;
-  const merged = [...emotionCards, ...riskCards];
-  const unique = [];
-  const seenTitles = new Set();
-
-  merged.forEach((card) => {
-    if (!seenTitles.has(card.title) && unique.length < 4) {
-      seenTitles.add(card.title);
-      unique.push(card);
-    }
-  });
-
-  return unique;
+function normalizeRisk(value) {
+  const risk = asString(value, "Low");
+  return VALID_RISK_LEVELS.has(risk) ? risk : "Low";
 }
 
-function buildSupportResponse(risk, sentiment, stress) {
-  if (risk === "High") {
-    return "Your words suggest elevated distress. The assistant should lead with grounding, reduce cognitive load, and clearly encourage immediate human support if you may be unsafe.";
+function parseGroqJson(content) {
+  if (!content || typeof content !== "string") {
+    return null;
   }
-  if (risk === "Moderate") {
-    return "Your check-in suggests meaningful strain. The assistant should keep the next steps simple, supportive, and practical rather than overwhelming.";
+
+  let cleaned = content.trim();
+
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
   }
-  if (sentiment >= 68 && stress <= 34) {
-    return "You sound relatively steady right now. The best support is to reinforce routines that protect this calmer baseline.";
+
+  const jsonStart = cleaned.indexOf("{");
+  const jsonEnd = cleaned.lastIndexOf("}");
+  if (jsonStart >= 0 && jsonEnd > jsonStart) {
+    cleaned = cleaned.slice(jsonStart, jsonEnd + 1);
   }
-  return "Your check-in sounds mixed but manageable. A small reset or gentle reflection could help keep things from building up.";
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (error) {
+    return null;
+  }
 }
 
-function analyzeText(text) {
-  const normalizedText = normalizeText(text);
-  if (!normalizedText) {
-    const safety = analyzeCrisisSafety("");
-    return {
-      emotion: "Neutral",
-      sentiment: 50,
-      stress: 0,
-      risk: "Low",
-      support: "Gentle check-in",
-      response: "A quick emotional check-in will help the assistant tailor calming suggestions.",
-      recommendations: buildRecommendations("neutral", "Low"),
-      emotionSignals: { neutral: 1 },
-      primaryEmotionKey: "neutral",
-      safety,
-      model: MODEL_INFO,
-    };
-  }
+function buildSystemPrompt() {
+  return [
+    "You are SafeSpace.ai's emotional interpretation assistant.",
+    "Analyze the user's check-in text and return ONLY valid raw JSON with no markdown, code fences, or extra text.",
+    "Do NOT perform crisis escalation, suicide assessment, or emergency routing.",
+    "Focus on emotional interpretation, supportive language, recommendations, and emotion signal scoring.",
+    "Use this exact JSON schema:",
+    JSON.stringify({
+      emotion: "Sadness",
+      sentiment: 22,
+      stress: 65,
+      risk: "Moderate",
+      support: "Structured support summary",
+      response: "Empathetic response for the user",
+      recommendations: [
+        {
+          tag: "Mood",
+          title: "Take a short walk",
+          text: "Fresh air may help regulate stress.",
+        },
+      ],
+      emotionSignals: {
+        calm: 0,
+        joy: 0,
+        hopeful: 0,
+        focused: 0,
+        neutral: 0.1,
+        fatigue: 0.3,
+        sadness: 0.8,
+        anxiety: 0.2,
+        stress: 0.1,
+        anger: 0,
+        fear: 0,
+        overwhelm: 0.1,
+      },
+      primaryEmotionKey: "sadness",
+    }),
+    `Allowed primaryEmotionKey values: ${EMOTION_KEYS.join(", ")}.`,
+    "Allowed risk values: Low, Moderate, High.",
+    "sentiment and stress must be integers from 0 to 100.",
+    "Each emotionSignals value must be a number from 0 to 1.",
+    "recommendations must contain 1 to 4 objects with tag, title, and text.",
+  ].join("\n");
+}
 
-  const rawTokens = tokenize(normalizedText);
-  const tokens = rawTokens.map(simpleStem);
-  let emotionSignals = buildEmotionSignals(normalizedText, tokens);
-
-  let valenceTotal = 0;
-  let stressSignal = 0;
-  let positiveHits = 0;
-  let negativeHits = 0;
-
-  tokens.forEach((token, index) => {
-    const weight = TOKEN_WEIGHTS[token] || 0;
-    if (!weight) {
-      return;
-    }
-
-    const previous = tokens[index - 1];
-    const previousTwo = tokens[index - 2];
-    const isNegated = NEGATORS.has(previous) || NEGATORS.has(previousTwo);
-    const isIntensified = INTENSIFIERS.has(previous) || INTENSIFIERS.has(previousTwo);
-
-    let adjusted = weight;
-    if (isNegated) {
-      adjusted *= -0.7;
-    }
-    if (isIntensified) {
-      adjusted *= 1.4;
-    }
-
-    valenceTotal += adjusted;
-    if (adjusted > 0) {
-      positiveHits += 1;
-    } else {
-      negativeHits += 1;
-      stressSignal += Math.abs(adjusted);
-    }
-  });
-
-  Object.entries(PHRASE_WEIGHTS).forEach(([phrase, weight]) => {
-    if (normalizedText.includes(phrase)) {
-      valenceTotal += weight;
-      if (weight < 0) {
-        stressSignal += Math.abs(weight) * 0.9;
-        negativeHits += 1;
-      } else {
-        positiveHits += 1;
-      }
-    }
-  });
-
-  const severeHits = countPhraseHits(normalizedText, SEVERE_RISK_PHRASES);
-  const tokenVolume = clamp(tokens.length / 36, 0, 1.8);
-
-  const sentiment = clamp(
-    Math.round(50 + valenceTotal * 8.8 + (emotionSignals.joy || 0) * 3.4 + (emotionSignals.hopeful || 0) * 2.8 - (emotionSignals.sadness || 0) * 4.6 - (emotionSignals.anxiety || 0) * 4.2),
-    0,
-    100
-  );
-
-  const stress = clamp(
-    Math.round(
-      8 +
-        stressSignal * 8.4 +
-        (emotionSignals.stress || 0) * 7.2 +
-        (emotionSignals.overwhelm || 0) * 7.8 +
-        (emotionSignals.anxiety || 0) * 6.6 +
-        severeHits * 14 +
-        tokenVolume * 10 -
-        (emotionSignals.calm || 0) * 5.6 -
-        (emotionSignals.focused || 0) * 2.2
-    ),
-    0,
-    100
-  );
-
-  const safety = analyzeCrisisSafety(text, { sentiment, stress });
-  let risk = "Low";
-  let support = "Gentle check-in";
-  if (safety.level === "crisis" || severeHits > 0 || stress >= 78 || sentiment <= 18) {
-    risk = "High";
-    support = "Immediate calming support";
-  } else if (safety.level === "elevated" || stress >= 45 || sentiment <= 45 || negativeHits > positiveHits + 1) {
-    risk = "Moderate";
-    support = "Structured support";
-  } else if (sentiment >= 68 && stress <= 34) {
-    support = "Mood maintenance";
-  }
-
-  emotionSignals = dampenContradictoryPositiveSignals(emotionSignals, {
-    sentiment,
-    stress,
-    risk,
-    positiveHits,
-  });
-  const primaryEmotionKey = getDominantEmotionKey(emotionSignals);
-  const primaryEmotionLabel =
-    EMOTION_MODEL_CATALOG.find((emotion) => emotion.key === primaryEmotionKey)?.label || "Neutral";
+function validateGroqPayload(raw = {}) {
+  const emotionSignals = normalizeEmotionSignals(raw.emotionSignals);
+  const primaryEmotionKey = resolvePrimaryEmotionKey(raw.primaryEmotionKey, emotionSignals);
 
   return {
-    emotion: primaryEmotionLabel,
-    sentiment,
-    stress,
-    risk,
-    support,
-    response: buildSupportResponse(risk, sentiment, stress),
-    recommendations: buildRecommendations(primaryEmotionKey, risk),
+    emotion: getEmotionLabel(primaryEmotionKey) || asString(raw.emotion, "Neutral"),
+    sentiment: Math.round(clampNumber(raw.sentiment, 0, 100, 50)),
+    stress: Math.round(clampNumber(raw.stress, 0, 100, 20)),
+    risk: normalizeRisk(raw.risk),
+    support: asString(raw.support, "Gentle check-in"),
+    response: asString(
+      raw.response,
+      "Thank you for sharing this check-in. A small, supportive next step can help you feel a little steadier."
+    ),
+    recommendations: asRecommendationArray(raw.recommendations),
     emotionSignals,
     primaryEmotionKey,
+  };
+}
+
+function applyCrisisOverrides(validated, text) {
+  const safety = analyzeCrisisSafety(text, {
+    sentiment: validated.sentiment,
+    stress: validated.stress,
+  });
+
+  let risk = validated.risk;
+  let support = validated.support;
+
+  if (safety.level === "crisis" || safety.isCrisis) {
+    risk = "High";
+    support = "Immediate calming support";
+  } else if (safety.level === "elevated") {
+    if (risk === "Low") {
+      risk = "Moderate";
+    }
+    if (support === "Gentle check-in" || support === "Mood maintenance") {
+      support = "Structured support";
+    }
+  } else if (safety.level === "watch" && risk === "Low" && validated.stress >= 45) {
+    risk = "Moderate";
+    support = "Structured support";
+  }
+
+  if (validated.stress >= 78 || validated.sentiment <= 18) {
+    risk = "High";
+    support = "Immediate calming support";
+  } else if (validated.stress >= 45 || validated.sentiment <= 45) {
+    if (risk === "Low") {
+      risk = "Moderate";
+    }
+    if (support === "Gentle check-in") {
+      support = "Structured support";
+    }
+  }
+
+  return {
+    ...validated,
+    emotion: getEmotionLabel(validated.primaryEmotionKey),
+    risk,
+    support,
+    safety: enrichSafetyForRisk(safety, risk),
+    model: MODEL_INFO,
+  };
+}
+
+function buildEmptyTextResponse() {
+  const safety = analyzeCrisisSafety("");
+
+  return {
+    emotion: "Neutral",
+    sentiment: 50,
+    stress: 0,
+    risk: "Low",
+    support: "Gentle check-in",
+    response: "A quick emotional check-in will help the assistant tailor calming suggestions.",
+    recommendations: [...DEFAULT_RECOMMENDATIONS],
+    emotionSignals: normalizeEmotionSignals({ neutral: 1 }),
+    primaryEmotionKey: "neutral",
     safety,
     model: MODEL_INFO,
   };
+}
+
+function buildFallbackResponse(text, reason = "unknown") {
+  console.error(`[text-analysis] Falling back to safe defaults (${reason}).`);
+
+  const validated = validateGroqPayload({
+    emotion: "Neutral",
+    sentiment: 50,
+    stress: 20,
+    risk: "Low",
+    support: "Gentle check-in",
+    response:
+      "Thank you for sharing. The assistant could not complete a full analysis right now, but your check-in still matters. Consider a brief reset and reach out to someone you trust if things feel heavy.",
+    recommendations: DEFAULT_RECOMMENDATIONS,
+    emotionSignals: { neutral: 1 },
+    primaryEmotionKey: "neutral",
+  });
+
+  return applyCrisisOverrides(validated, text);
+}
+
+async function callGroq(text) {
+  const client = getGroqClient();
+  if (!client) {
+    throw new Error("GROQ_API_KEY is not configured.");
+  }
+
+  const completionPromise = client.chat.completions.create({
+    model: GROQ_MODEL,
+    temperature: GROQ_TEMPERATURE,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: buildSystemPrompt() },
+      {
+        role: "user",
+        content: `Analyze this emotional check-in and return only JSON:\n\n${text}`,
+      },
+    ],
+  });
+
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Groq request timed out after ${GROQ_TIMEOUT_MS}ms.`));
+    }, GROQ_TIMEOUT_MS);
+  });
+
+  const completion = await Promise.race([completionPromise, timeoutPromise]);
+  const content = completion?.choices?.[0]?.message?.content;
+
+  if (!content) {
+    throw new Error("Groq returned an empty completion.");
+  }
+
+  return content;
+}
+
+async function analyzeText(text) {
+  const normalizedText = normalizeText(text);
+
+  if (!normalizedText) {
+    return buildEmptyTextResponse();
+  }
+
+  try {
+    const rawContent = await callGroq(normalizedText);
+    const parsed = parseGroqJson(rawContent);
+
+    if (!parsed) {
+      return buildFallbackResponse(normalizedText, "malformed-json");
+    }
+
+    const validated = validateGroqPayload(parsed);
+    return applyCrisisOverrides(validated, normalizedText);
+  } catch (error) {
+    console.error("[text-analysis] Groq analysis failed:", error.message || error);
+    return buildFallbackResponse(normalizedText, "groq-error");
+  }
 }
 
 module.exports = {

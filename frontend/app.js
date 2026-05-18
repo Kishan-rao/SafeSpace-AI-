@@ -404,21 +404,6 @@ const severeRiskPhrases = [
   "end my life",
 ];
 
-const emotionKeywordBoosters = {
-  calm: ["at peace", "steady", "safe", "composed", "settled"],
-  joy: ["joyful", "joyous", "cheerful", "delighted", "thrilled", "elated", "euphoric", "good mood"],
-  hopeful: ["hope", "optimistic", "progress", "improving", "encouraged"],
-  focused: ["focus", "clarity", "discipline", "productive", "on track"],
-  neutral: ["okay", "fine", "alright", "manageable"],
-  fatigue: ["sleep deprived", "worn out", "burned out", "no energy", "fatigued"],
-  sadness: ["heartbroken", "down", "empty", "tearful", "low mood"],
-  anxiety: ["anxiety", "overthinking", "uneasy", "on edge", "panic"],
-  stress: ["deadlines", "pressure", "workload", "overloaded", "tense"],
-  anger: ["mad", "resentful", "rage", "annoyed", "irritated"],
-  fear: ["afraid", "scared", "frightened", "unsafe", "dread"],
-  overwhelm: ["too much", "flooded", "out of control", "can't handle", "cannot handle"],
-};
-
 function setSentimentHistory(entries) {
   sentimentHistory = Array.isArray(entries)
     ? entries
@@ -860,8 +845,14 @@ function renderUserDashboard(payload) {
     .join("");
 }
 
-function renderCrisisSafety(safety = null) {
-  if (!safety || safety.level === "none") {
+const TELE_MANAS_GUIDANCE =
+  "Call Tele-MANAS (14416) for immediate mental health support in India";
+
+function renderCrisisSafety(safety = null, risk = "Low") {
+  const isElevatedRisk = risk === "Moderate" || risk === "High";
+  const shouldShowPanel = isElevatedRisk || (safety && safety.level !== "none");
+
+  if (!shouldShowPanel) {
     crisisPanel.classList.add("hidden");
     crisisTitle.textContent = "Support escalation";
     crisisGuidance.textContent = "";
@@ -869,11 +860,17 @@ function renderCrisisSafety(safety = null) {
     return;
   }
 
+  const isCrisis = safety?.level === "crisis" || risk === "High";
+  const guidance = isElevatedRisk ? TELE_MANAS_GUIDANCE : safety?.guidance || "";
+  const actions = isElevatedRisk
+    ? [TELE_MANAS_GUIDANCE, ...(safety?.actions || [])]
+    : safety?.actions || [];
+
   crisisPanel.classList.remove("hidden");
-  crisisPanel.classList.toggle("crisis", safety.level === "crisis");
-  crisisTitle.textContent = safety.level === "crisis" ? "Immediate support recommended" : "Extra support recommended";
-  crisisGuidance.textContent = safety.guidance || "";
-  crisisActions.innerHTML = (safety.actions || [])
+  crisisPanel.classList.toggle("crisis", isCrisis);
+  crisisTitle.textContent = isCrisis ? "Immediate support recommended" : "Extra support recommended";
+  crisisGuidance.textContent = guidance;
+  crisisActions.innerHTML = [...new Set(actions)]
     .map((action) => `<span>${sanitizeText(action)}</span>`)
     .join("");
 }
@@ -1035,112 +1032,6 @@ function titleCase(value) {
     .join(" ");
 }
 
-function normalizeForAnalysis(text) {
-  return (text || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9'\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function countTermHits(normalizedText, terms) {
-  if (!normalizedText) {
-    return 0;
-  }
-
-  return terms.reduce((total, term) => {
-    const escaped = escapeRegExp(term.toLowerCase()).replace(/\\ /g, "\\s+");
-    const regex = new RegExp(`(^|\\s)${escaped}(?=\\s|$)`, "g");
-    const matches = normalizedText.match(regex);
-    return total + (matches ? matches.length : 0);
-  }, 0);
-}
-
-function countIntensifiedTermHits(normalizedText, terms) {
-  if (!normalizedText) {
-    return 0;
-  }
-
-  const intensifiers = ["very", "extremely", "really", "so", "super", "totally", "deeply", "severely"];
-  return terms.reduce((total, term) => {
-    const escapedTerm = escapeRegExp(term.toLowerCase()).replace(/\\ /g, "\\s+");
-    const escapedIntensifiers = intensifiers.map((word) => escapeRegExp(word)).join("|");
-    const regex = new RegExp(`(^|\\s)(?:${escapedIntensifiers})\\s+${escapedTerm}(?=\\s|$)`, "g");
-    const matches = normalizedText.match(regex);
-    return total + (matches ? matches.length : 0);
-  }, 0);
-}
-
-function countNegatedTermHits(normalizedText, terms) {
-  if (!normalizedText) {
-    return 0;
-  }
-
-  const negators = ["not", "never", "hardly", "barely", "cannot", "can't", "don't", "didn't", "isn't", "wasn't"];
-  return terms.reduce((total, term) => {
-    const escapedTerm = escapeRegExp(term.toLowerCase()).replace(/\\ /g, "\\s+");
-    const escapedNegators = negators.map((word) => escapeRegExp(word)).join("|");
-    const regex = new RegExp(`(^|\\s)(?:${escapedNegators})\\s+${escapedTerm}(?=\\s|$)`, "g");
-    const matches = normalizedText.match(regex);
-    return total + (matches ? matches.length : 0);
-  }, 0);
-}
-
-function countKeywordHits(normalizedText, keywords) {
-  return countTermHits(normalizedText, keywords);
-}
-
-function buildTextEmotionSignals(normalizedText) {
-  const signals = {};
-
-  emotionModelCatalog.forEach((emotion) => {
-    const baseHits = countTermHits(normalizedText, emotion.keywords);
-    const boosterHits = countTermHits(normalizedText, emotionKeywordBoosters[emotion.key] || []);
-    const score = baseHits * 1.2 + boosterHits * 1.8;
-    signals[emotion.key] = Number(score.toFixed(3));
-  });
-
-  const signalSum = Object.values(signals).reduce((sum, value) => sum + value, 0);
-  if (signalSum < 0.8) {
-    signals.neutral = (signals.neutral || 0) + 1.2;
-  }
-
-  return signals;
-}
-
-function getDominantEmotionKey(emotionSignals) {
-  return Object.entries(emotionSignals).sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral";
-}
-
-function buildFacialEmotionBlend(expressionScores = {}) {
-  const neutral = expressionScores.neutral || 0;
-  const happy = expressionScores.happy || 0;
-  const sad = expressionScores.sad || 0;
-  const angry = expressionScores.angry || 0;
-  const fearful = expressionScores.fearful || 0;
-  const surprised = expressionScores.surprised || 0;
-  const disgusted = expressionScores.disgusted || 0;
-
-  return {
-    calm: neutral * 0.55 + happy * 0.2,
-    joy: happy * 0.9 + surprised * 0.2,
-    hopeful: happy * 0.5 + neutral * 0.2 + surprised * 0.2,
-    focused: neutral * 0.5 + happy * 0.2,
-    neutral: neutral * 0.95,
-    fatigue: sad * 0.45 + neutral * 0.2,
-    sadness: sad * 0.95,
-    anxiety: fearful * 0.75 + surprised * 0.35,
-    stress: fearful * 0.45 + angry * 0.35 + neutral * 0.2,
-    anger: angry * 0.95 + disgusted * 0.35,
-    fear: fearful * 0.95,
-    overwhelm: fearful * 0.4 + surprised * 0.3 + sad * 0.2 + angry * 0.2,
-  };
-}
-
 function getIntensityLabel(probability) {
   if (probability >= 22) {
     return "High";
@@ -1151,92 +1042,21 @@ function getIntensityLabel(probability) {
   return "Low";
 }
 
-function getDistressLevel(analysisResult = {}) {
-  const sentiment = Number(analysisResult.sentiment) || 0;
-  const stress = Number(analysisResult.stress) || 0;
-  const signals = analysisResult.emotionSignals || {};
-  const challengingSignal = ["sadness", "anger", "anxiety", "stress", "fear", "overwhelm", "fatigue"].reduce(
-    (total, key) => total + (Number(signals[key]) || 0),
-    0
-  );
-
-  if (analysisResult.risk === "High" || stress >= 70 || sentiment <= 25 || challengingSignal >= 3.5) {
-    return "high";
-  }
-
-  if (analysisResult.risk === "Moderate" || stress >= 45 || sentiment <= 42 || challengingSignal >= 1.8) {
-    return "moderate";
-  }
-
-  return "low";
-}
-
-function dampenContradictoryPositiveScore(score, emotion, context) {
-  if (emotion.valence !== "Positive" || context.distressLevel === "low") {
-    return score;
-  }
-
-  const hasExplicitPositiveSignal = context.keywordHits > 0 || context.textSignal >= 0.5;
-  if (hasExplicitPositiveSignal) {
-    return score * (context.distressLevel === "high" ? 0.35 : 0.65);
-  }
-
-  return 0;
-}
-
-function buildEmotionSpectrum(normalizedText, analysisResult, expressionScores = null) {
-  const facialBlend = buildFacialEmotionBlend(expressionScores || {});
-  const distressLevel = getDistressLevel(analysisResult);
+function buildEmotionSpectrum(emotionSignals = {}) {
   const entries = emotionModelCatalog.map((emotion) => {
-    const keywordHits = countKeywordHits(normalizedText, emotion.keywords);
-    const textSignal = analysisResult.emotionSignals?.[emotion.key] || 0;
-    let score = 0.12 + keywordHits * 0.85 + textSignal * 2.8;
-
-    if (emotion.valence === "Positive") {
-      score += (analysisResult.sentiment / 100) * 1.5;
-      score += ((100 - analysisResult.stress) / 100) * 1.1;
-    } else if (emotion.valence === "Challenging") {
-      score += (analysisResult.stress / 100) * 1.7;
-      score += ((100 - analysisResult.sentiment) / 100) * 1.4;
-    }
-
-    if (expressionScores) {
-      score += (facialBlend[emotion.key] || 0) * 1.9;
-    }
-
-    if (emotion.key === analysisResult.primaryEmotionKey) {
-      score += 1.25;
-    }
-
-    score = dampenContradictoryPositiveScore(score, emotion, {
-      distressLevel,
-      keywordHits,
-      textSignal,
-    });
-
-    return { ...emotion, rawScore: Math.max(score, 0), keywordHits };
+    const rawScore = Number(emotionSignals[emotion.key]) || 0;
+    return { ...emotion, rawScore: Math.max(rawScore, 0) };
   });
 
-  const poweredEntries = entries.map((entry) => ({
-    ...entry,
-    weightedScore: Math.pow(entry.rawScore, 1.35),
-  }));
-  const total = poweredEntries.reduce((sum, entry) => sum + entry.weightedScore, 0);
+  const total = entries.reduce((sum, entry) => sum + entry.rawScore, 0);
 
-  return poweredEntries.map((entry) => {
-    const probability = total > 0 ? (entry.weightedScore / total) * 100 : 0;
+  return entries.map((entry) => {
+    const probability = total > 0 ? (entry.rawScore / total) * 100 : 0;
     return {
       ...entry,
       probability: Number(probability.toFixed(1)),
       intensity: getIntensityLabel(probability),
-      signal:
-        entry.keywordHits > 0 && expressionScores
-          ? "Text + face"
-          : entry.keywordHits > 0
-            ? "Text"
-            : expressionScores
-              ? "Face + baseline"
-              : "Baseline",
+      signal: "Backend",
     };
   });
 }
@@ -1261,10 +1081,10 @@ function renderEmotionSpectrum(spectrum, hasFaceSignal) {
     )
     .join("");
 
-  emotionModelStatus.textContent = hasFaceSignal ? "Text + face signals" : "Text signal only";
+  emotionModelStatus.textContent = hasFaceSignal ? "Backend text + expression context" : "Backend text analysis";
   emotionSpectrumNote.textContent = hasFaceSignal
-    ? "Probabilities blend linguistic cues with detected facial expressions."
-    : "Probabilities currently use text and baseline priors. Start camera + capture for multimodal tracking.";
+    ? "Percentages reflect backend emotionSignals from your check-in. Facial expression is shown separately above."
+    : "Percentages reflect backend emotionSignals from your check-in only.";
 }
 
 function renderEmotionSpectrumResetState(reason = "idle") {
@@ -1370,7 +1190,6 @@ function updateHero(result, expressionLabel) {
 }
 
 async function applyAnalysis(expressionLabel = "Not captured yet", shouldTrack = false) {
-  const normalizedText = normalizeForAnalysis(emotionInput.value);
   supportResponse.textContent = "Analyzing your check-in with the hosted NLP service...";
 
   let result;
@@ -1386,14 +1205,14 @@ async function applyAnalysis(expressionLabel = "Not captured yet", shouldTrack =
     return;
   }
 
-  const emotionSpectrum = buildEmotionSpectrum(normalizedText, result, latestExpressionScores);
+  const emotionSpectrum = buildEmotionSpectrum(result.emotionSignals);
 
   dominantEmotion.textContent = result.emotion;
   sentimentScore.textContent = `${Math.round(result.sentiment)} / 100`;
   stressIndex.textContent = `${Math.round(result.stress)} / 100`;
   supportMode.textContent = result.support;
   supportResponse.textContent = result.response;
-  renderCrisisSafety(result.safety);
+  renderCrisisSafety(result.safety, result.risk);
 
   if (shouldTrack) {
     try {
