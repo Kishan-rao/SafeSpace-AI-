@@ -49,13 +49,18 @@ const expressionConfidenceList = document.getElementById("expressionConfidenceLi
 const confidenceSignalStatus = document.getElementById("confidenceSignalStatus");
 const expressionReliabilityScore = document.getElementById("expressionReliabilityScore");
 const expressionReliabilityNote = document.getElementById("expressionReliabilityNote");
+const wellnessStatus = document.getElementById("wellnessStatus");
+const wellnessSentiment = document.getElementById("wellnessSentiment");
+const wellnessStress = document.getElementById("wellnessStress");
+const wellnessScore = document.getElementById("wellnessScore");
+const wellnessInsight = document.getElementById("wellnessInsight");
 const emotionSpectrumList = document.getElementById("emotionSpectrumList");
 const emotionModelStatus = document.getElementById("emotionModelStatus");
 const emotionSpectrumNote = document.getElementById("emotionSpectrumNote");
 
 const heroMoodLabel = document.getElementById("heroMoodLabel");
-const heroStressScore = document.getElementById("heroStressScore");
 const heroSummary = document.getElementById("heroSummary");
+const metricStressLevel = document.getElementById("metricStressLevel");
 const metricSentiment = document.getElementById("metricSentiment");
 const metricRisk = document.getElementById("metricRisk");
 const authStateLabel = document.getElementById("authStateLabel");
@@ -80,6 +85,7 @@ const chips = [...document.querySelectorAll(".chip-row .chip")];
 let cameraStream = null;
 let faceApiReady = false;
 let latestExpressionScores = null;
+let analysisRequestCounter = 0;
 const expressionApiUrl = "/api/expression/analyze";
 const expressionHealthUrl = "/api/expression/health";
 const textAnalysisApiUrl = "/api/text/analyze";
@@ -537,16 +543,42 @@ function closeAuthModal() {
   authErrorMessage.textContent = "";
 }
 
+const DEFAULT_LIVE_SNAPSHOT = {
+  moodLabel: "Awaiting check-in",
+  summary:
+    "Run a text or facial expression check-in below. This snapshot stays at default until your latest session input is analyzed.",
+  stressLevel: "Not analyzed",
+  sentiment: "Not analyzed",
+  risk: "Not analyzed",
+};
+
+function resetLiveSupportSnapshot() {
+  heroMoodLabel.textContent = DEFAULT_LIVE_SNAPSHOT.moodLabel;
+  heroSummary.textContent = DEFAULT_LIVE_SNAPSHOT.summary;
+  metricStressLevel.textContent = DEFAULT_LIVE_SNAPSHOT.stressLevel;
+  metricSentiment.textContent = DEFAULT_LIVE_SNAPSHOT.sentiment;
+  metricRisk.textContent = DEFAULT_LIVE_SNAPSHOT.risk;
+}
+
+function renderLiveSupportAnalyzing() {
+  heroMoodLabel.textContent = "Analyzing...";
+  heroSummary.textContent = "Processing your latest text or facial expression check-in.";
+  metricStressLevel.textContent = "Analyzing...";
+  metricSentiment.textContent = "Analyzing...";
+  metricRisk.textContent = "Analyzing...";
+}
+
 function applyAuthState() {
   const isSignedIn = Boolean(currentUser);
   authStateLabel.textContent = isSignedIn ? `Signed in as ${currentUser.name}` : "Guest mode";
   accountSummary.textContent = isSignedIn
-    ? ""
+    ? "Signed in. Your live snapshot resets until you complete a new check-in this session."
     : "Sign in to save your check-ins, mood history, and personalized trend data securely.";
   openAuthButton.classList.toggle("hidden", isSignedIn);
   logoutButton.classList.toggle("hidden", !isSignedIn);
   userDashboardCard.classList.toggle("hidden", !isSignedIn);
   moodCheckinPanel.classList.toggle("hidden", !isSignedIn);
+  resetLiveSupportSnapshot();
   if (!isSignedIn) {
     renderDashboardEmptyState("Sign in to view saved check-ins and dashboard history.");
   }
@@ -978,6 +1010,65 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+/** Derived display score from backend sentiment (0–100) and stress (0–100) only. */
+function computeWellnessScore(sentimentPercent = 50, stressPercent = 0) {
+  const normalizedSentiment = clamp((Number(sentimentPercent) / 100) * 2 - 1, -1, 1);
+  const normalizedStress = clamp(Number(stressPercent) / 100, 0, 1);
+  const sentimentContribution = ((normalizedSentiment + 1) / 2) * 70;
+  const stressContribution = (1 - normalizedStress) * 30;
+  const composite = Math.round(sentimentContribution + stressContribution);
+
+  return {
+    wellnessScore: clamp(composite, 0, 100),
+    sentimentPercent: Math.round(((normalizedSentiment + 1) / 2) * 100),
+    stressPercent: Math.round(normalizedStress * 100),
+  };
+}
+
+function getWellnessInsight(wellnessScore, sentimentPercent = 50, stressPercent = 0) {
+  if (wellnessScore >= 75) {
+    return "You're in a strong emotional place. Maintain this momentum with your current routines.";
+  }
+  if (wellnessScore >= 60) {
+    return "Your wellness is stable. A brief break or light activity could provide a boost.";
+  }
+  if (wellnessScore >= 45) {
+    return "Your stress is notable. A grounding exercise or short break may help restore balance.";
+  }
+  if (wellnessScore >= 30) {
+    return "You're experiencing significant stress. Consider a dedicated calm practice from the recommendations.";
+  }
+  if (stressPercent >= 70 || sentimentPercent <= 25) {
+    return "Your wellness needs attention. Review the safety guidance and consider reaching out for support.";
+  }
+  return "Your wellness needs attention. Try one of the high-priority recommendations or reach out for support.";
+}
+
+function updateWellnessTracker(sentimentPercent = 50, stressPercent = 0) {
+  const wellness = computeWellnessScore(sentimentPercent, stressPercent);
+
+  wellnessStatus.textContent = "Updated from check-in";
+  wellnessSentiment.textContent = `${wellness.sentimentPercent}% positive`;
+  wellnessStress.textContent = `${wellness.stressPercent}% elevated`;
+  wellnessScore.textContent = `${wellness.wellnessScore} / 100`;
+  wellnessInsight.textContent = getWellnessInsight(
+    wellness.wellnessScore,
+    Math.round(Number(sentimentPercent)),
+    Math.round(Number(stressPercent))
+  );
+}
+
+function renderWellnessResetState(reason = "idle") {
+  wellnessStatus.textContent = reason === "loading" ? "Analyzing..." : "Ready";
+  wellnessSentiment.textContent = "—";
+  wellnessStress.textContent = "—";
+  wellnessScore.textContent = "—";
+  wellnessInsight.textContent =
+    reason === "loading"
+      ? "Computing wellness from your latest backend analysis..."
+      : "Run a text check-in to see wellness metrics derived from backend sentiment and stress scores.";
+}
+
 function captureFrameSnapshot() {
   const width = webcamVideo.videoWidth || 0;
   const height = webcamVideo.videoHeight || 0;
@@ -1050,37 +1141,50 @@ function buildEmotionSpectrum(emotionSignals = {}) {
 
   const total = entries.reduce((sum, entry) => sum + entry.rawScore, 0);
 
-  return entries.map((entry) => {
-    const probability = total > 0 ? (entry.rawScore / total) * 100 : 0;
-    return {
-      ...entry,
-      probability: Number(probability.toFixed(1)),
-      intensity: getIntensityLabel(probability),
-      signal: "Backend",
-    };
-  });
+  return entries
+    .map((entry) => {
+      const probability = total > 0 ? (entry.rawScore / total) * 100 : 0;
+      return {
+        ...entry,
+        probability: Number(probability.toFixed(1)),
+        intensity: getIntensityLabel(probability),
+        signal: "Backend",
+      };
+    })
+    .sort((left, right) => right.probability - left.probability);
+}
+
+function renderEmotionRow(emotion) {
+  const isActive = emotion.probability > 0;
+  return `
+    <article class="emotion-row${isActive ? "" : " emotion-row--zero"}">
+      <div class="emotion-row-head">
+        <strong>${emotion.label}</strong>
+        <span>${emotion.probability}%</span>
+      </div>
+      <div class="emotion-bar">
+        <div class="emotion-bar-fill" style="width: ${emotion.probability}%;"></div>
+      </div>
+      ${isActive ? `
+      <div class="emotion-row-meta">
+        ${emotion.intensity} intensity | ${emotion.valence} valence | ${emotion.energy} energy | ${emotion.signal}
+      </div>
+      ` : ""}
+    </article>
+  `;
+}
+
+function buildAllEmotionsZero() {
+  return emotionModelCatalog.map((emotion) => ({
+    ...emotion,
+    probability: 0,
+    intensity: "Low",
+    signal: "Backend",
+  }));
 }
 
 function renderEmotionSpectrum(spectrum, hasFaceSignal) {
-  emotionSpectrumList.innerHTML = spectrum
-    .map(
-      (emotion) => `
-        <article class="emotion-row">
-          <div class="emotion-row-head">
-            <strong>${emotion.label}</strong>
-            <span>${emotion.probability}%</span>
-          </div>
-          <div class="emotion-bar">
-            <div class="emotion-bar-fill" style="width: ${emotion.probability}%;"></div>
-          </div>
-          <div class="emotion-row-meta">
-            ${emotion.intensity} intensity | ${emotion.valence} valence | ${emotion.energy} energy | ${emotion.signal}
-          </div>
-        </article>
-      `
-    )
-    .join("");
-
+  emotionSpectrumList.innerHTML = spectrum.map(renderEmotionRow).join("");
   emotionModelStatus.textContent = hasFaceSignal ? "Backend text + expression context" : "Backend text analysis";
   emotionSpectrumNote.textContent = hasFaceSignal
     ? "Percentages reflect backend emotionSignals from your check-in. Facial expression is shown separately above."
@@ -1088,33 +1192,17 @@ function renderEmotionSpectrum(spectrum, hasFaceSignal) {
 }
 
 function renderEmotionSpectrumResetState(reason = "idle") {
-  emotionSpectrumList.innerHTML = emotionModelCatalog
-    .map(
-      (emotion) => `
-        <article class="emotion-row">
-          <div class="emotion-row-head">
-            <strong>${emotion.label}</strong>
-            <span>0%</span>
-          </div>
-          <div class="emotion-bar">
-            <div class="emotion-bar-fill" style="width: 0%;"></div>
-          </div>
-          <div class="emotion-row-meta">
-            Low intensity | ${emotion.valence} valence | ${emotion.energy} energy | Waiting for capture
-          </div>
-        </article>
-      `
-    )
-    .join("");
-
-  emotionModelStatus.textContent = "Awaiting analysis";
+  const allZero = buildAllEmotionsZero();
+  emotionSpectrumList.innerHTML = allZero.map(renderEmotionRow).join("");
+  emotionModelStatus.textContent = reason === "loading" ? "Analyzing..." : "Awaiting analysis";
   emotionSpectrumNote.textContent =
-    "Shows probability and intensity for every modeled emotion in this prototype.";
+    "Shows probability and intensity for modeled emotions with at least 1% signal strength.";
 }
 
 function resetEmotionTracker(reason = "idle") {
   latestExpressionScores = null;
   renderEmotionSpectrumResetState(reason);
+  renderWellnessResetState(reason);
 }
 
 async function syncServerSessionState() {
@@ -1180,28 +1268,101 @@ function renderRecommendations(cards) {
     .join("");
 }
 
+function getStressLevelLabel(stress) {
+  if (stress >= 70) {
+    return "High";
+  }
+  if (stress >= 40) {
+    return "Moderate";
+  }
+  return "Low";
+}
+
+function getSentimentLabel(sentiment) {
+  return Number(sentiment) >= 50 ? "Positive" : "Negative";
+}
+
+function normalizeRiskLabel(risk) {
+  const value = String(risk || "Low").trim();
+  if (value === "Moderate" || value === "High" || value === "Low") {
+    return value;
+  }
+  return "Low";
+}
+
+function hasMeaningfulExpressionLabel(expressionLabel) {
+  const expressionCue = String(expressionLabel || "").trim();
+  return (
+    Boolean(expressionCue) &&
+    expressionCue !== "Not captured yet" &&
+    !expressionCue.startsWith("Waiting")
+  );
+}
+
+function buildHeroSummary(result, expressionLabel) {
+  const response = String(result?.response || "").trim();
+  const hasExpression = hasMeaningfulExpressionLabel(expressionLabel);
+  const expressionCue = String(expressionLabel || "").trim();
+
+  if (response && hasExpression) {
+    return `${response} Facial cue: ${expressionCue}.`;
+  }
+  if (response) {
+    return response;
+  }
+  if (hasExpression) {
+    return `Facial expression check-in captured: ${expressionCue}.`;
+  }
+  return "Your latest check-in has been analyzed.";
+}
+
 function updateHero(result, expressionLabel) {
-  heroMoodLabel.textContent = result.emotion;
-  heroStressScore.textContent = `${Math.round(result.stress)}%`;
-  heroSummary.textContent = `${result.response} Facial cue: ${expressionLabel}.`;
-  metricSentiment.textContent =
-    result.sentiment >= 60 ? "Positive" : result.sentiment >= 35 ? "Mixed" : "Negative";
-  metricRisk.textContent = result.risk;
+  const stressScore = Math.round(Number(result?.stress) || 0);
+  const sentimentScore = Math.round(Number(result?.sentiment) || 0);
+  const stressLevel = getStressLevelLabel(stressScore);
+  const sentimentLabel = getSentimentLabel(sentimentScore);
+  const riskLevel = normalizeRiskLabel(result?.risk);
+
+  heroMoodLabel.textContent = result?.emotion || "Neutral";
+  heroSummary.textContent = buildHeroSummary(result, expressionLabel);
+  metricStressLevel.textContent = `${stressLevel} (${stressScore}%)`;
+  metricSentiment.textContent = `${sentimentLabel} (${sentimentScore}%)`;
+  metricRisk.textContent = riskLevel;
 }
 
 async function applyAnalysis(expressionLabel = "Not captured yet", shouldTrack = false) {
+  const requestId = (analysisRequestCounter += 1);
+  const inputText = emotionInput.value;
+
   supportResponse.textContent = "Analyzing your check-in with the hosted NLP service...";
+  dominantEmotion.textContent = "Analyzing...";
+  sentimentScore.textContent = "-- / 100";
+  stressIndex.textContent = "-- / 100";
+  supportMode.textContent = "Analyzing";
+  renderLiveSupportAnalyzing();
+  renderEmotionSpectrumResetState("loading");
+  renderWellnessResetState("loading");
 
   let result;
   try {
-    result = await analyzeTextOnServer(emotionInput.value);
+    result = await analyzeTextOnServer(inputText);
   } catch (error) {
+    if (requestId !== analysisRequestCounter) {
+      return;
+    }
+
     console.error("Text analysis failed:", error);
     supportResponse.textContent = getErrorMessage(
       error,
       "The text-analysis service is currently unavailable. Please try again after the backend is running."
     );
     renderCrisisSafety(null);
+    renderWellnessResetState("idle");
+    resetLiveSupportSnapshot();
+    return;
+  }
+
+  if (requestId !== analysisRequestCounter) {
     return;
   }
 
@@ -1216,7 +1377,7 @@ async function applyAnalysis(expressionLabel = "Not captured yet", shouldTrack =
 
   if (shouldTrack) {
     try {
-      await saveCheckinToServer(result, emotionInput.value, expressionLabel);
+      await saveCheckinToServer(result, inputText, expressionLabel);
     } catch (error) {
       console.error("Check-in could not be saved:", error);
       supportResponse.textContent = `${result.response} ${getErrorMessage(
@@ -1229,10 +1390,20 @@ async function applyAnalysis(expressionLabel = "Not captured yet", shouldTrack =
     }
   }
 
+  if (requestId !== analysisRequestCounter) {
+    return;
+  }
+
   renderSentimentTrend();
   renderRecommendations(result.recommendations);
   renderEmotionSpectrum(emotionSpectrum, Boolean(latestExpressionScores));
-  updateHero(result, expressionLabel);
+
+  if (inputText.trim() || hasMeaningfulExpressionLabel(expressionLabel)) {
+    updateHero(result, expressionLabel);
+    updateWellnessTracker(result.sentiment, result.stress);
+  } else {
+    resetLiveSupportSnapshot();
+  }
 }
 
 async function handleAuthSubmit(event) {
@@ -1496,6 +1667,7 @@ function closeBreathingExercise() {
   clearInterval(breathingInterval);
 }
 
+resetLiveSupportSnapshot();
 renderSentimentTrend();
 renderRecommendations(recommendationLibrary.low);
 renderExpressionConfidence(null, "none");

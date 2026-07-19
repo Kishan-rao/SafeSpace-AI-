@@ -57,21 +57,25 @@
               Sign in to save your check-ins, mood history, and personalized trend data securely.
             </p>
             <div class="hero-score">
-              <span id="heroMoodLabel">Balanced</span>
-              <strong id="heroStressScore">34%</strong>
+              <span class="hero-mood-kicker">Primary emotion</span>
+              <strong id="heroMoodLabel">Awaiting check-in</strong>
             </div>
             <p id="heroSummary">
-              Your check-ins, tone, and facial cues are used to estimate how supported you may
-              need to feel right now.
+              Run a text or facial expression check-in below. This snapshot stays at default until
+              your latest session input is analyzed.
             </p>
             <div class="hero-metrics">
               <div>
-                <span>Sentiment</span>
-                <strong id="metricSentiment">Neutral</strong>
+                <span>Stress level</span>
+                <strong id="metricStressLevel">Not analyzed</strong>
               </div>
               <div>
-                <span>Distress risk</span>
-                <strong id="metricRisk">Low</strong>
+                <span>Sentiment</span>
+                <strong id="metricSentiment">Not analyzed</strong>
+              </div>
+              <div>
+                <span>Risk level</span>
+                <strong id="metricRisk">Not analyzed</strong>
               </div>
             </div>
           </aside>
@@ -126,7 +130,7 @@
             </div>
             <div class="emotion-spectrum-list" id="emotionSpectrumList"></div>
             <p class="small-note" id="emotionSpectrumNote">
-              Shows probability and intensity for every modeled emotion in this prototype.
+              Shows emotions with at least 1% signal strength from your backend check-in analysis.
             </p>
           </div>
         </section>
@@ -176,6 +180,36 @@
               <strong id="expressionReliabilityScore">0 / 100</strong>
               <p id="expressionReliabilityNote">
                 Start camera and capture expression to evaluate confidence across all facial emotions.
+              </p>
+            </div>
+          </div>
+
+          <div class="expression-ai-card wellness-card">
+            <div class="expression-ai-header">
+              <div>
+                <p class="section-label">AI-ML Feature</p>
+                <h4>Wellness Tracker</h4>
+              </div>
+              <span class="status-pill" id="wellnessStatus">Ready</span>
+            </div>
+            <div class="wellness-metrics" id="wellnessMetrics">
+              <div class="wellness-row">
+                <span>Sentiment score</span>
+                <strong id="wellnessSentiment">—</strong>
+              </div>
+              <div class="wellness-row">
+                <span>Stress level</span>
+                <strong id="wellnessStress">—</strong>
+              </div>
+              <div class="wellness-row">
+                <span>Wellness score</span>
+                <strong id="wellnessScore">—</strong>
+              </div>
+            </div>
+            <div class="wellness-insight">
+              <p id="wellnessInsight">
+                Run a text check-in to see wellness metrics derived from backend sentiment and stress
+                scores.
               </p>
             </div>
           </div>
@@ -467,6 +501,6 @@
     </div>
 
     <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
-    <script src="./app.js?v=emotion-spectrum-fix-20260428"></script>
+    <script src="./app.js?v=all-emotions-always-20260521"></script>
   </body>
 </html>

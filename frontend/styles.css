@@ -197,25 +197,28 @@ h4 {
 }
 
 .hero-score {
-  display: flex;
-  justify-content: space-between;
-  align-items: end;
+  display: grid;
+  gap: 6px;
   margin: 18px 0 8px;
 }
 
-.hero-score span {
-  font-size: 1.1rem;
+.hero-mood-kicker {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
   font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .hero-score strong {
-  font-size: clamp(2.4rem, 5vw, 4rem);
-  line-height: 1;
+  font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+  line-height: 1.15;
 }
 
 .hero-metrics {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-top: 18px;
 }
@@ -234,6 +237,7 @@ h4 {
 
 .content-grid {
   grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: start;
 }
 
 .panel {
@@ -242,12 +246,16 @@ h4 {
 
 .input-panel {
   grid-column: span 7;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
 }
 
 .webcam-panel {
   grid-column: span 5;
   display: flex;
   flex-direction: column;
+  align-self: start;
 }
 
 .dashboard-panel,
@@ -330,6 +338,14 @@ textarea:focus {
   border-radius: var(--radius-lg);
   background: rgba(255, 255, 255, 0.65);
   border: 1px solid rgba(61, 44, 24, 0.08);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 480px;
+}
+
+.emotion-spectrum-card .small-note {
+  margin-bottom: 0;
 }
 
 .emotion-spectrum-header {
@@ -341,8 +357,22 @@ textarea:focus {
 }
 
 .emotion-spectrum-list {
-  display: grid;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+}
+
+.emotion-spectrum-empty {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px dashed rgba(61, 44, 24, 0.14);
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
 }
 
 .emotion-row {
@@ -350,6 +380,11 @@ textarea:focus {
   border: 1px solid rgba(61, 44, 24, 0.08);
   background: rgba(255, 255, 255, 0.72);
   padding: 10px 12px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
 }
 
 .emotion-row-head {
@@ -387,6 +422,19 @@ textarea:focus {
   margin-top: 8px;
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.emotion-row--zero {
+  opacity: 0.52;
+}
+
+.emotion-row--zero .emotion-row-head span {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.emotion-row--zero .emotion-bar-fill {
+  width: 0 !important;
 }
 
 .chip {
@@ -543,6 +591,47 @@ textarea:focus {
 .expression-confidence-list {
   display: grid;
   gap: 8px;
+}
+
+.wellness-card {
+  margin-top: 12px;
+}
+
+.wellness-metrics {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(61, 44, 24, 0.08);
+}
+
+.wellness-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.wellness-row span {
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.wellness-row strong {
+  font-size: 0.98rem;
+}
+
+.wellness-insight {
+  margin-top: 8px;
+}
+
+.wellness-insight p {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0;
 }
 
 .confidence-row {
@@ -1137,6 +1226,10 @@ textarea:focus {
   .support-panel {
     grid-column: span 12;
   }
+
+  .input-panel {
+    align-self: start;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1179,6 +1272,10 @@ textarea:focus {
 
   .trend-score {
     text-align: left;
+  }
+
+  .hero-metrics {
+    grid-template-columns: 1fr;
   }
 
   .dashboard-header,

@@ -1,9 +1,14 @@
+/**
+ * Text emotional analysis: Groq LLM (primary) + heuristic validation layer + crisis safety overrides.
+ */
 const Groq = require("groq-sdk");
 const { analyzeCrisisSafety, enrichSafetyForRisk } = require("./crisis-safety-service");
+const { refineGroqAnalysis } = require("./text-heuristic-validation");
 
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const GROQ_TIMEOUT_MS = Number(process.env.GROQ_TIMEOUT_MS) || 15_000;
 const GROQ_TEMPERATURE = 0.3;
+const GROQ_MAX_RETRIES = 2; // retry once on transient errors (429, 503)
 
 const MODEL_INFO = {
   id: GROQ_MODEL,
@@ -26,7 +31,7 @@ const EMOTION_MODEL_CATALOG = [
   { key: "overwhelm", label: "Overwhelm" },
 ];
 
-const EMOTION_KEYS = EMOTION_MODEL_CATALOG.map((emotion) => emotion.key);
+const EMOTION_KEYS = EMOTION_MODEL_CATALOG.map((e) => e.key);
 const EMOTION_KEY_SET = new Set(EMOTION_KEYS);
 const VALID_RISK_LEVELS = new Set(["Low", "Moderate", "High"]);
 
@@ -43,25 +48,29 @@ const DEFAULT_RECOMMENDATIONS = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Groq client — lazy singleton
+// ---------------------------------------------------------------------------
+
 let groqClient = null;
 
 function getGroqClient() {
   if (!process.env.GROQ_API_KEY) {
     return null;
   }
-
   if (!groqClient) {
     groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
   }
-
   return groqClient;
 }
 
+// ---------------------------------------------------------------------------
+// Pure helpers
+// ---------------------------------------------------------------------------
+
 function clampNumber(value, min, max, fallback) {
   const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
+  if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(parsed, min), max);
 }
 
@@ -81,37 +90,55 @@ function normalizeText(text) {
 }
 
 function getEmotionLabel(key) {
-  return EMOTION_MODEL_CATALOG.find((emotion) => emotion.key === key)?.label || "Neutral";
+  return EMOTION_MODEL_CATALOG.find((e) => e.key === key)?.label || "Neutral";
 }
 
+/**
+ * Clamp each signal to [0,1], then sum-normalise so the distribution is
+ * always a proper probability simplex (values sum to 1).  This prevents
+ * Groq returning un-normalised weights (e.g. sadness:0.8, anxiety:0.8)
+ * from inflating multiple emotions simultaneously and corrupting ranking.
+ */
 function normalizeEmotionSignals(raw = {}) {
-  const normalized = {};
-
+  const clamped = {};
   EMOTION_KEYS.forEach((key) => {
-    normalized[key] = Number(clampSignal(raw[key]).toFixed(4));
+    clamped[key] = clampSignal(raw[key]);
   });
 
-  if (Object.values(normalized).every((value) => value === 0)) {
-    normalized.neutral = 1;
+  const total = Object.values(clamped).reduce((s, v) => s + v, 0);
+
+  if (total === 0) {
+    // No signal at all — default to neutral
+    clamped.neutral = 1;
+    return clamped;
   }
 
-  return normalized;
+  if (total > 1.05) {
+    // Unnormalised — rescale to sum=1
+    const normalised = {};
+    EMOTION_KEYS.forEach((key) => {
+      normalised[key] = Number((clamped[key] / total).toFixed(4));
+    });
+    return normalised;
+  }
+
+  // Already a valid simplex — just round
+  const rounded = {};
+  EMOTION_KEYS.forEach((key) => {
+    rounded[key] = Number(clamped[key].toFixed(4));
+  });
+  return rounded;
 }
 
 function resolvePrimaryEmotionKey(key, signals) {
   const candidate = asString(key, "").toLowerCase();
-  if (EMOTION_KEY_SET.has(candidate)) {
-    return candidate;
-  }
+  if (EMOTION_KEY_SET.has(candidate)) return candidate;
 
-  const ranked = Object.entries(signals).sort((a, b) => b[1] - a[1]);
-  return ranked[0]?.[0] || "neutral";
+  return Object.entries(signals).sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral";
 }
 
 function asRecommendationArray(value) {
-  if (!Array.isArray(value)) {
-    return [...DEFAULT_RECOMMENDATIONS];
-  }
+  if (!Array.isArray(value)) return [...DEFAULT_RECOMMENDATIONS];
 
   const recommendations = value
     .map((item) => ({
@@ -130,30 +157,48 @@ function normalizeRisk(value) {
   return VALID_RISK_LEVELS.has(risk) ? risk : "Low";
 }
 
+/**
+ * Robustly extract a JSON object from a Groq completion that may include
+ * markdown fences, leading prose, or trailing text.
+ */
 function parseGroqJson(content) {
-  if (!content || typeof content !== "string") {
-    return null;
-  }
+  if (!content || typeof content !== "string") return null;
 
   let cleaned = content.trim();
 
-  if (cleaned.startsWith("```")) {
-    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  // Strip markdown code fences
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+
+  // Find the outermost JSON object using brace depth tracking (handles nested objects)
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < cleaned.length; i++) {
+    if (cleaned[i] === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (cleaned[i] === "}") {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        const candidate = cleaned.slice(start, i + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed;
+          }
+        } catch {
+          // Try next outermost object
+          start = -1;
+        }
+      }
+    }
   }
 
-  const jsonStart = cleaned.indexOf("{");
-  const jsonEnd = cleaned.lastIndexOf("}");
-  if (jsonStart >= 0 && jsonEnd > jsonStart) {
-    cleaned = cleaned.slice(jsonStart, jsonEnd + 1);
-  }
-
-  try {
-    const parsed = JSON.parse(cleaned);
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch (error) {
-    return null;
-  }
+  return null;
 }
+
+// ---------------------------------------------------------------------------
+// System prompt — example uses sum-normalised emotionSignals (sum ≈ 1.0)
+// ---------------------------------------------------------------------------
 
 function buildSystemPrompt() {
   return [
@@ -177,35 +222,39 @@ function buildSystemPrompt() {
         },
       ],
       emotionSignals: {
-        calm: 0,
-        joy: 0,
-        hopeful: 0,
-        focused: 0,
-        neutral: 0.1,
-        fatigue: 0.3,
-        sadness: 0.8,
-        anxiety: 0.2,
+        calm: 0.0,
+        joy: 0.0,
+        hopeful: 0.0,
+        focused: 0.0,
+        neutral: 0.05,
+        fatigue: 0.2,
+        sadness: 0.45,
+        anxiety: 0.15,
         stress: 0.1,
-        anger: 0,
-        fear: 0,
-        overwhelm: 0.1,
+        anger: 0.0,
+        fear: 0.0,
+        overwhelm: 0.05,
       },
       primaryEmotionKey: "sadness",
     }),
     `Allowed primaryEmotionKey values: ${EMOTION_KEYS.join(", ")}.`,
     "Allowed risk values: Low, Moderate, High.",
     "sentiment and stress must be integers from 0 to 100.",
-    "Each emotionSignals value must be a number from 0 to 1.",
+    "Each emotionSignals value must be a decimal from 0 to 1, and all values must sum to approximately 1.0.",
     "recommendations must contain 1 to 4 objects with tag, title, and text.",
   ].join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// Payload validation
+// ---------------------------------------------------------------------------
 
 function validateGroqPayload(raw = {}) {
   const emotionSignals = normalizeEmotionSignals(raw.emotionSignals);
   const primaryEmotionKey = resolvePrimaryEmotionKey(raw.primaryEmotionKey, emotionSignals);
 
   return {
-    emotion: getEmotionLabel(primaryEmotionKey) || asString(raw.emotion, "Neutral"),
+    emotion: getEmotionLabel(primaryEmotionKey),
     sentiment: Math.round(clampNumber(raw.sentiment, 0, 100, 50)),
     stress: Math.round(clampNumber(raw.stress, 0, 100, 20)),
     risk: normalizeRisk(raw.risk),
@@ -220,7 +269,11 @@ function validateGroqPayload(raw = {}) {
   };
 }
 
-function applyCrisisOverrides(validated, text) {
+// ---------------------------------------------------------------------------
+// Crisis safety overrides — single coherent resolution pass
+// ---------------------------------------------------------------------------
+
+function applyCrisisSafetyOverrides(validated, text) {
   const safety = analyzeCrisisSafety(text, {
     sentiment: validated.sentiment,
     stress: validated.stress,
@@ -229,29 +282,26 @@ function applyCrisisOverrides(validated, text) {
   let risk = validated.risk;
   let support = validated.support;
 
-  if (safety.level === "crisis" || safety.isCrisis) {
+  // Priority 1: Explicit crisis signals always win
+  if (safety.isCrisis || safety.level === "crisis") {
     risk = "High";
     support = "Immediate calming support";
-  } else if (safety.level === "elevated") {
-    if (risk === "Low") {
-      risk = "Moderate";
+  } else {
+    // Priority 2: Numeric thresholds (deterministic guardrails)
+    if (validated.stress >= 78 || validated.sentiment <= 18) {
+      risk = "High";
+      support = "Immediate calming support";
+    } else if (validated.stress >= 45 || validated.sentiment <= 45) {
+      if (risk === "Low") risk = "Moderate";
+      if (support === "Gentle check-in") support = "Structured support";
     }
-    if (support === "Gentle check-in" || support === "Mood maintenance") {
-      support = "Structured support";
-    }
-  } else if (safety.level === "watch" && risk === "Low" && validated.stress >= 45) {
-    risk = "Moderate";
-    support = "Structured support";
-  }
 
-  if (validated.stress >= 78 || validated.sentiment <= 18) {
-    risk = "High";
-    support = "Immediate calming support";
-  } else if (validated.stress >= 45 || validated.sentiment <= 45) {
-    if (risk === "Low") {
+    // Priority 3: Safety-level from crisis service (only escalates, never de-escalates)
+    if (safety.level === "elevated") {
+      if (risk === "Low") risk = "Moderate";
+      if (support === "Gentle check-in" || support === "Mood maintenance") support = "Structured support";
+    } else if (safety.level === "watch" && risk === "Low" && validated.stress >= 45) {
       risk = "Moderate";
-    }
-    if (support === "Gentle check-in") {
       support = "Structured support";
     }
   }
@@ -266,9 +316,18 @@ function applyCrisisOverrides(validated, text) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Pipeline
+// ---------------------------------------------------------------------------
+
+/** Groq output → heuristic confidence refinement → deterministic crisis overrides. */
+function finalizeAnalysis(validated, text) {
+  const refined = refineGroqAnalysis(validated, text);
+  return applyCrisisSafetyOverrides(refined, text);
+}
+
 function buildEmptyTextResponse() {
   const safety = analyzeCrisisSafety("");
-
   return {
     emotion: "Neutral",
     sentiment: 50,
@@ -300,49 +359,101 @@ function buildFallbackResponse(text, reason = "unknown") {
     primaryEmotionKey: "neutral",
   });
 
-  return applyCrisisOverrides(validated, text);
+  // Wrap heuristic layer in its own try/catch — if it also fails, still return safe result
+  try {
+    return finalizeAnalysis(validated, text);
+  } catch (heuristicError) {
+    console.error("[text-analysis] Heuristic layer also failed in fallback:", heuristicError.message);
+    return applyCrisisSafetyOverrides(validated, text);
+  }
 }
 
-async function callGroq(text) {
+// ---------------------------------------------------------------------------
+// Groq API call with retry on transient errors
+// ---------------------------------------------------------------------------
+
+function isRetryableError(error) {
+  const status = error?.status ?? error?.statusCode;
+  if (status === 429 || status === 503) return true;
+  const msg = String(error?.message || "").toLowerCase();
+  return msg.includes("rate limit") || msg.includes("service unavailable") || msg.includes("timeout");
+}
+
+async function callGroqOnce(text) {
   const client = getGroqClient();
   if (!client) {
     throw new Error("GROQ_API_KEY is not configured.");
   }
 
-  const completionPromise = client.chat.completions.create({
-    model: GROQ_MODEL,
-    temperature: GROQ_TEMPERATURE,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: buildSystemPrompt() },
-      {
-        role: "user",
-        content: `Analyze this emotional check-in and return only JSON:\n\n${text}`,
-      },
-    ],
-  });
+  const controller = new AbortController();
+  let timeoutHandle;
 
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => {
-      reject(new Error(`Groq request timed out after ${GROQ_TIMEOUT_MS}ms.`));
-    }, GROQ_TIMEOUT_MS);
-  });
+  try {
+    const completionPromise = client.chat.completions.create({
+      model: GROQ_MODEL,
+      temperature: GROQ_TEMPERATURE,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: buildSystemPrompt() },
+        {
+          role: "user",
+          content: `Analyze this emotional check-in and return only JSON:\n\n${text}`,
+        },
+      ],
+    }, { signal: controller.signal });
 
-  const completion = await Promise.race([completionPromise, timeoutPromise]);
-  const content = completion?.choices?.[0]?.message?.content;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        controller.abort();
+        reject(new Error(`Groq request timed out after ${GROQ_TIMEOUT_MS}ms.`));
+      }, GROQ_TIMEOUT_MS);
+    });
 
-  if (!content) {
-    throw new Error("Groq returned an empty completion.");
+    const completion = await Promise.race([completionPromise, timeoutPromise]);
+    const content = completion?.choices?.[0]?.message?.content;
+
+    if (!content) throw new Error("Groq returned an empty completion.");
+
+    return content;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+async function callGroq(text) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= GROQ_MAX_RETRIES; attempt++) {
+    try {
+      return await callGroqOnce(text);
+    } catch (error) {
+      lastError = error;
+      if (attempt < GROQ_MAX_RETRIES && isRetryableError(error)) {
+        const delay = 800 * Math.pow(2, attempt); // 800ms, 1600ms
+        console.warn(`[text-analysis] Groq transient error (attempt ${attempt + 1}), retrying in ${delay}ms:`, error.message);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      } else {
+        break;
+      }
+    }
   }
 
-  return content;
+  throw lastError;
 }
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
 
 async function analyzeText(text) {
   const normalizedText = normalizeText(text);
 
   if (!normalizedText) {
     return buildEmptyTextResponse();
+  }
+
+  if (!process.env.GROQ_API_KEY) {
+    return buildFallbackResponse(normalizedText, "missing-api-key");
   }
 
   try {
@@ -354,7 +465,7 @@ async function analyzeText(text) {
     }
 
     const validated = validateGroqPayload(parsed);
-    return applyCrisisOverrides(validated, normalizedText);
+    return finalizeAnalysis(validated, normalizedText);
   } catch (error) {
     console.error("[text-analysis] Groq analysis failed:", error.message || error);
     return buildFallbackResponse(normalizedText, "groq-error");

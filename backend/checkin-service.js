@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Checkin = require("./models/Checkin");
 
 const CHECKIN_SELECT_FIELDS =
@@ -75,7 +76,11 @@ async function listRecentCheckins(userId, limit = 5) {
 }
 
 function buildCheckinQuery(userId, filters = {}) {
-  const query = { userId };
+  const query = {
+    userId: typeof userId === "string" && mongoose.Types.ObjectId.isValid(userId)
+      ? new mongoose.Types.ObjectId(userId)
+      : userId
+  };
   const emotion = normalizeExactFilter(filters.emotion);
   const risk = normalizeExactFilter(filters.risk);
   const from = parseDate(filters.from);
