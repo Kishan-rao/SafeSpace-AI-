@@ -11,8 +11,6 @@ const CRISIS_PHRASES = [
   "hurt myself",
   "can't go on",
   "cannot go on",
-  "give up",
-  "unsafe",
 ];
 
 const TELE_MANAS_GUIDANCE =
@@ -30,6 +28,8 @@ const SEVERE_DISTRESS_PHRASES = [
   "numb",
   "broken",
   "no way out",
+  "give up",
+  "unsafe",
 ];
 
 function normalizeText(text) {

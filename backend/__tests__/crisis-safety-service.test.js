@@ -20,8 +20,6 @@ const CRISIS_PHRASES = [
   "hurt myself",
   "can't go on",
   "cannot go on",
-  "give up",
-  "unsafe",
 ];
 
 const SEVERE_DISTRESS_PHRASES = [
@@ -34,6 +32,8 @@ const SEVERE_DISTRESS_PHRASES = [
   "numb",
   "broken",
   "no way out",
+  "give up",
+  "unsafe",
 ];
 
 function safetyForLevel(level) {
