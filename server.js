@@ -1,4 +1,7 @@
 require("dotenv").config();
+const { loadEnv } = require("./backend/config/env");
+const env = loadEnv();
+
 const express = require("express");
 const path = require("path");
 const cors = require("cors");
@@ -11,15 +14,22 @@ const { connectDB } = require("./backend/config/db");
 const { metricsMiddleware } = require("./backend/metrics");
 const { errorHandler, notFoundHandler } = require("./backend/middleware/error-handler");
 const { requestContext } = require("./backend/middleware/request-context");
+const logger = require("./backend/logger");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = env.PORT;
 const FRONTEND_DIR = path.join(__dirname, "frontend");
-const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const IS_PRODUCTION = env.NODE_ENV === "production";
 
-connectDB();
+connectDB({
+  mongoUri: env.MONGODB_URI,
+  timeoutMs: env.MONGODB_CONNECT_TIMEOUT_MS,
+  serverSelectionTimeoutMs: env.MONGODB_SERVER_SELECTION_TIMEOUT_MS,
+  maxPoolSize: env.MONGODB_MAX_POOL_SIZE,
+  minPoolSize: env.MONGODB_MIN_POOL_SIZE,
+});
 
-app.set("trust proxy", process.env.TRUST_PROXY === "true" ? 1 : false);
+app.set("trust proxy", env.TRUST_PROXY === "true" ? 1 : false);
 morgan.token("id", (req) => req.id);
 app.use(requestContext());
 app.use(metricsMiddleware());
@@ -47,7 +57,7 @@ app.use(
   })
 );
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:3000")
+const allowedOrigins = env.ALLOWED_ORIGINS
   .split(",")
   .map((o) => o.trim());
 
@@ -82,14 +92,14 @@ app.use(notFoundHandler);
 app.use(errorHandler({ isProduction: IS_PRODUCTION }));
 
 const server = app.listen(PORT, () => {
-  console.log(`🚀 SafeSpace server running at http://localhost:${PORT}`);
+  logger.info(`🚀 SafeSpace server running at http://localhost:${PORT}`);
 });
 
 async function shutdown(signal) {
-  console.log(`${signal} received. Closing SafeSpace server...`);
+  logger.info(`${signal} received. Closing SafeSpace server...`);
   server.close(async () => {
     const forceExitTimer = setTimeout(() => {
-      console.error("Graceful shutdown timed out. Forcing exit.");
+      logger.error("Graceful shutdown timed out. Forcing exit.");
       process.exit(1);
     }, 10_000);
 
@@ -98,7 +108,7 @@ async function shutdown(signal) {
       clearTimeout(forceExitTimer);
       process.exit(0);
     } catch (error) {
-      console.error("Error during shutdown:", error);
+      logger.error({ err: error }, "Error during shutdown");
       clearTimeout(forceExitTimer);
       process.exit(1);
     }
@@ -108,9 +118,9 @@ async function shutdown(signal) {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled promise rejection:", reason);
+  logger.error({ reason }, "Unhandled promise rejection");
 });
 process.on("uncaughtException", (error) => {
-  console.error("Uncaught exception:", error);
+  logger.error({ err: error }, "Uncaught exception");
   shutdown("uncaughtException");
 });

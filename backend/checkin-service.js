@@ -169,6 +169,8 @@ async function listCheckins(userId, options = {}) {
 }
 
 module.exports = {
+  buildCheckinQuery,
+  getCalendarRange,
   listCheckins,
   listRecentCheckins,
   saveCheckin,

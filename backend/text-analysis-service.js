@@ -4,6 +4,8 @@
 const { analyzeCrisisSafety, enrichSafetyForRisk } = require("./crisis-safety-service");
 const { refineGroqAnalysis } = require("./text-heuristic-validation");
 const groqProvider = require("./providers/groq-provider");
+const defaultLogger = require("./logger");
+const { loadEnv } = require("./config/env");
 
 // Re-export MODEL_INFO from the active provider so importers (e.g. health controller)
 // automatically reflect the current provider's metadata without reaching into providers/.
@@ -271,8 +273,8 @@ function buildEmptyTextResponse() {
   };
 }
 
-function buildFallbackResponse(text, reason = "unknown") {
-  console.error(`[text-analysis] Falling back to safe defaults (${reason}).`);
+function buildFallbackResponse(text, reason = "unknown", logger = defaultLogger) {
+  logger.warn({ reason }, "Falling back to safe defaults.");
 
   const validated = validateGroqPayload({
     emotion: "Neutral",
@@ -291,7 +293,7 @@ function buildFallbackResponse(text, reason = "unknown") {
   try {
     return finalizeAnalysis(validated, text);
   } catch (heuristicError) {
-    console.error("[text-analysis] Heuristic layer also failed in fallback:", heuristicError.message);
+    logger.error({ err: heuristicError }, "Heuristic layer also failed in fallback");
     return applyCrisisSafetyOverrides(validated, text);
   }
 }
@@ -300,30 +302,30 @@ function buildFallbackResponse(text, reason = "unknown") {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-async function analyzeText(text) {
+async function analyzeText(text, { logger = defaultLogger } = {}) {
   const normalizedText = normalizeText(text);
 
   if (!normalizedText) {
     return buildEmptyTextResponse();
   }
 
-  if (!process.env.GROQ_API_KEY) {
-    return buildFallbackResponse(normalizedText, "missing-api-key");
+  if (!loadEnv().GROQ_API_KEY) {
+    return buildFallbackResponse(normalizedText, "missing-api-key", logger);
   }
 
   try {
-    const rawContent = await groqProvider.getCompletion(normalizedText);
+    const rawContent = await groqProvider.getCompletion(normalizedText, { logger });
     const parsed = parseGroqJson(rawContent);
 
     if (!parsed) {
-      return buildFallbackResponse(normalizedText, "malformed-json");
+      return buildFallbackResponse(normalizedText, "malformed-json", logger);
     }
 
     const validated = validateGroqPayload(parsed);
     return finalizeAnalysis(validated, normalizedText);
   } catch (error) {
-    console.error("[text-analysis] Provider analysis failed:", error.message || error);
-    return buildFallbackResponse(normalizedText, "provider-error");
+    logger.error({ err: error }, "Provider analysis failed");
+    return buildFallbackResponse(normalizedText, "provider-error", logger);
   }
 }
 

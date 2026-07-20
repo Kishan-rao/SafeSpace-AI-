@@ -1,6 +1,7 @@
 const { getDBStatus } = require("../config/db");
 const { SERVER_BOOTED_AT, SERVER_SESSION_ID } = require("../config/server-info");
 const { analyzeText, MODEL_INFO: TEXT_MODEL_INFO } = require("../text-analysis-service");
+const { childLogger } = require("../utils/request-logger");
 
 function getTextHealth(req, res) {
   res.status(200).json({
@@ -16,8 +17,9 @@ function getTextHealth(req, res) {
 }
 
 async function analyzeTextRequest(req, res) {
-  const text = String(req.body.text || "");
-  const result = await analyzeText(text);
+  const text = String(req.validatedBody.text || "");
+  const logger = childLogger(req);
+  const result = await analyzeText(text, { logger });
   res.status(200).json(result);
 }
 

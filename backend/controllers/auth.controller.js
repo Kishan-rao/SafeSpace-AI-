@@ -4,7 +4,7 @@ const { invalidateSession, loginUser, registerUser } = require("../auth-service"
 
 async function register(req, res) {
   try {
-    const result = await registerUser(req.body);
+    const result = await registerUser(req.validatedBody);
     res.status(201).json({
       user: result.user,
       token: result.session.token,
@@ -16,7 +16,7 @@ async function register(req, res) {
 
 async function login(req, res) {
   try {
-    const result = await loginUser(req.body);
+    const result = await loginUser(req.validatedBody);
     res.status(200).json({
       user: result.user,
       token: result.session.token,

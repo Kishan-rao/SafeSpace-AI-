@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const logger = require("../logger");
 
 const dbStatus = {
   state: "disconnected",
@@ -16,16 +17,28 @@ function setDisconnectedStatus(error = null) {
   dbStatus.lastError = error ? error.message : null;
 }
 
-async function connectDB() {
-  const mongoUri = process.env.MONGODB_URI;
-  const timeoutMs = Number(process.env.MONGODB_CONNECT_TIMEOUT_MS) || 5000;
-  const maxPoolSize = Number(process.env.MONGODB_MAX_POOL_SIZE) || 20;
-  const minPoolSize = Number(process.env.MONGODB_MIN_POOL_SIZE) || 0;
+/**
+ * @param {{
+ *   mongoUri: string|undefined,
+ *   timeoutMs: number,
+ *   serverSelectionTimeoutMs: number|undefined,
+ *   maxPoolSize: number,
+ *   minPoolSize: number,
+ * }} config Pre-validated values from env.js — no process.env reads here.
+ */
+async function connectDB(config) {
+  const {
+    mongoUri,
+    timeoutMs,
+    serverSelectionTimeoutMs,
+    maxPoolSize,
+    minPoolSize,
+  } = config;
 
   if (!mongoUri) {
     const error = new Error("MONGODB_URI is not configured.");
     setDisconnectedStatus(error);
-    console.error(`MongoDB configuration error: ${error.message}`);
+    logger.error({ err: error }, `MongoDB configuration error: ${error.message}`);
     return null;
   }
 
@@ -35,7 +48,7 @@ async function connectDB() {
 
     const connectionAttempt = mongoose.connect(mongoUri, {
       connectTimeoutMS: timeoutMs,
-      serverSelectionTimeoutMS: Number(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS) || timeoutMs,
+      serverSelectionTimeoutMS: serverSelectionTimeoutMs ?? timeoutMs,
       maxPoolSize,
       minPoolSize,
     });
@@ -57,14 +70,14 @@ async function connectDB() {
     dbStatus.connectedAt = new Date().toISOString();
     dbStatus.lastError = null;
 
-    console.log(`MongoDB connected: ${conn.connection.host}/${conn.connection.name}`);
+    logger.info(`MongoDB connected: ${conn.connection.host}/${conn.connection.name}`);
     return conn;
   } catch (error) {
     setDisconnectedStatus(error);
     if (mongoose.connection.readyState !== 1) {
       await mongoose.disconnect().catch(() => {});
     }
-    console.error(`MongoDB connection error: ${error.message}`);
+    logger.error({ err: error }, `MongoDB connection error: ${error.message}`);
     return null;
   }
 }

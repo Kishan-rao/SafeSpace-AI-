@@ -13,13 +13,16 @@ async function getCheckins(req, res) {
 }
 
 async function createCheckin(req, res) {
+  let checkin;
   try {
-    const checkin = await saveCheckin(req.user.id, req.body);
-    const checkins = await listRecentCheckins(req.user.id, 5);
-    res.status(201).json({ checkin, checkins });
+    checkin = await saveCheckin(req.user.id, req.validatedBody);
   } catch (error) {
     throw createHttpError(400, "Check-in could not be saved", error.message);
   }
+
+  // Fetch the recent list separately — a failure here must not report as a save failure
+  const checkins = await listRecentCheckins(req.user.id, 5);
+  res.status(201).json({ checkin, checkins });
 }
 
 module.exports = {

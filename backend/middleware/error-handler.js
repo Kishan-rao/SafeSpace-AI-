@@ -1,3 +1,5 @@
+const logger = require("../logger");
+
 function createHttpError(status, error, detail) {
   const httpError = new Error(detail || error);
   httpError.status = status;
@@ -80,7 +82,7 @@ function errorHandler({ isProduction = false } = {}) {
 
     const response = getErrorResponse(error, isProduction);
     if (response.status >= 500) {
-      console.error(`[${req.id || "no-request-id"}]`, error.stack || error);
+      logger.error({ requestId: req.id, err: error }, error.stack || error.message);
     }
 
     return sendApiError(req, res, response.status, response.title, response.detail);

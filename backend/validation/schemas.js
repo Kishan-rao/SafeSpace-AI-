@@ -26,14 +26,14 @@ const checkinCreateSchema = z.object({
 });
 
 const authRegisterSchema = z.object({
-  name: z.string(),
-  email: z.string(),
-  password: z.string(),
+  name: z.string().min(1, "Name is required."),
+  email: z.string().email("A valid email address is required."),
+  password: z.string().min(6, "Password must be at least 6 characters."),
 });
 
 const authLoginSchema = z.object({
-  email: z.string(),
-  password: z.string(),
+  email: z.string().email("A valid email address is required."),
+  password: z.string().min(1, "Password is required."),
 });
 
 module.exports = {

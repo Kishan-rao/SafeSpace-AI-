@@ -3,9 +3,13 @@
  * @see ../providers/llm-provider.js for the interface contract.
  */
 const Groq = require("groq-sdk");
+const defaultLogger = require("../logger");
+const { loadEnv } = require("../config/env");
 
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-const GROQ_TIMEOUT_MS = Number(process.env.GROQ_TIMEOUT_MS) || 15_000;
+const env = loadEnv();
+
+const GROQ_MODEL = env.GROQ_MODEL;
+const GROQ_TIMEOUT_MS = env.GROQ_TIMEOUT_MS;
 const GROQ_TEMPERATURE = 0.3;
 const GROQ_MAX_RETRIES = 2; // retry once on transient errors (429, 503)
 
@@ -29,11 +33,11 @@ const EMOTION_KEYS = [
 let groqClient = null;
 
 function getGroqClient() {
-  if (!process.env.GROQ_API_KEY) {
+  if (!env.GROQ_API_KEY) {
     return null;
   }
   if (!groqClient) {
-    groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    groqClient = new Groq({ apiKey: env.GROQ_API_KEY });
   }
   return groqClient;
 }
@@ -143,7 +147,7 @@ async function callGroqOnce(text) {
   }
 }
 
-async function callGroq(text) {
+async function callGroq(text, logger) {
   let lastError;
 
   for (let attempt = 0; attempt <= GROQ_MAX_RETRIES; attempt++) {
@@ -153,7 +157,7 @@ async function callGroq(text) {
       lastError = error;
       if (attempt < GROQ_MAX_RETRIES && isRetryableError(error)) {
         const delay = 800 * Math.pow(2, attempt); // 800ms, 1600ms
-        console.warn(`[groq-provider] Groq transient error (attempt ${attempt + 1}), retrying in ${delay}ms:`, error.message);
+        logger.warn({ err: error, attempt: attempt + 1 }, "Groq transient error, retrying");
         await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
         break;
@@ -172,8 +176,8 @@ async function callGroq(text) {
  * @param {string} text Normalised check-in text.
  * @returns {Promise<string>} Raw JSON completion string from Groq.
  */
-async function getCompletion(text) {
-  return callGroq(text);
+async function getCompletion(text, { logger = defaultLogger } = {}) {
+  return callGroq(text, logger);
 }
 
 module.exports = { getCompletion, MODEL_INFO };
