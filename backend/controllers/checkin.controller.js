@@ -1,4 +1,3 @@
-const { MAX_CHECKIN_TEXT_LENGTH } = require("../constants");
 const { createHttpError } = require("../middleware/error-handler");
 const { listCheckins, listRecentCheckins, saveCheckin } = require("../checkin-service");
 
@@ -15,16 +14,6 @@ async function getCheckins(req, res) {
 
 async function createCheckin(req, res) {
   try {
-    const text = String(req.body.text || "");
-
-    if (text.length > MAX_CHECKIN_TEXT_LENGTH) {
-      throw createHttpError(
-        400,
-        "Text too long",
-        `Check-in text must be ${MAX_CHECKIN_TEXT_LENGTH} characters or fewer.`
-      );
-    }
-
     const checkin = await saveCheckin(req.user.id, req.body);
     const checkins = await listRecentCheckins(req.user.id, 5);
     res.status(201).json({ checkin, checkins });

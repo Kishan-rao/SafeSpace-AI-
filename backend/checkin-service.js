@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const Checkin = require("./models/Checkin");
+const repo = require("./repositories/checkin-repository");
 
 const CHECKIN_SELECT_FIELDS =
   "text sentiment stress emotion risk support primaryEmotionKey expressionLabel expressionScores safety createdAt";
@@ -46,35 +46,6 @@ function normalizeExactFilter(value) {
   return String(value || "").trim();
 }
 
-async function saveCheckin(userId, payload) {
-  const entry = await Checkin.create({
-    userId,
-    text: String(payload.text || "").trim(),
-    sentiment: Number(payload.sentiment) || 0,
-    stress: Number(payload.stress) || 0,
-    emotion: String(payload.emotion || "Neutral"),
-    risk: String(payload.risk || "Low"),
-    support: String(payload.support || "Gentle check-in"),
-    primaryEmotionKey: String(payload.primaryEmotionKey || "neutral"),
-    expressionLabel: String(payload.expressionLabel || "Not captured yet"),
-    expressionScores: payload.expressionScores || null,
-    safety: payload.safety || null,
-  });
-
-  const entryObj = entry.toObject();
-  return normalizeCheckin(entryObj);
-}
-
-async function listRecentCheckins(userId, limit = 5) {
-  const checkins = await Checkin.find({ userId })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .select(CHECKIN_SELECT_FIELDS)
-    .lean();
-
-  return checkins.map(normalizeCheckin).reverse();
-}
-
 function buildCheckinQuery(userId, filters = {}) {
   const query = {
     userId: typeof userId === "string" && mongoose.Types.ObjectId.isValid(userId)
@@ -108,22 +79,7 @@ function buildCheckinQuery(userId, filters = {}) {
 }
 
 async function summarizeCheckins(query) {
-  const [summary] = await Checkin.aggregate([
-    { $match: query },
-    {
-      $group: {
-        _id: null,
-        totalEntries: { $sum: 1 },
-        averageSentiment: { $avg: "$sentiment" },
-        averageStress: { $avg: "$stress" },
-        highRiskCount: {
-          $sum: {
-            $cond: [{ $eq: ["$risk", "High"] }, 1, 0],
-          },
-        },
-      },
-    },
-  ]);
+  const summary = await repo.aggregateSummary(query);
 
   if (!summary) {
     return {
@@ -135,17 +91,7 @@ async function summarizeCheckins(query) {
     };
   }
 
-  const [emotionSummary] = await Checkin.aggregate([
-    { $match: query },
-    {
-      $group: {
-        _id: "$emotion",
-        count: { $sum: 1 },
-      },
-    },
-    { $sort: { count: -1, _id: 1 } },
-    { $limit: 1 },
-  ]);
+  const emotionSummary = await repo.aggregateEmotionCounts(query);
 
   return {
     totalEntries: summary.totalEntries,
@@ -154,6 +100,30 @@ async function summarizeCheckins(query) {
     mostCommonEmotion: emotionSummary?._id || "Neutral",
     highRiskCount: summary.highRiskCount || 0,
   };
+}
+
+async function saveCheckin(userId, payload) {
+  const entry = await repo.createCheckin({
+    userId,
+    text: String(payload.text || "").trim(),
+    sentiment: Number(payload.sentiment) || 0,
+    stress: Number(payload.stress) || 0,
+    emotion: String(payload.emotion || "Neutral"),
+    risk: String(payload.risk || "Low"),
+    support: String(payload.support || "Gentle check-in"),
+    primaryEmotionKey: String(payload.primaryEmotionKey || "neutral"),
+    expressionLabel: String(payload.expressionLabel || "Not captured yet"),
+    expressionScores: payload.expressionScores || null,
+    safety: payload.safety || null,
+  });
+
+  const entryObj = entry.toObject();
+  return normalizeCheckin(entryObj);
+}
+
+async function listRecentCheckins(userId, limit = 5) {
+  const checkins = await repo.findRecentByUser(userId, limit);
+  return checkins.map(normalizeCheckin).reverse();
 }
 
 async function listCheckins(userId, options = {}) {
@@ -168,15 +138,11 @@ async function listCheckins(userId, options = {}) {
   const skip = (page - 1) * limit;
 
   const [total, pageEntries, summary, trendEntries, calendarEntries] = await Promise.all([
-    Checkin.countDocuments(query),
-    Checkin.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).select(CHECKIN_SELECT_FIELDS).lean(),
+    repo.countByQuery(query),
+    repo.findPageByQuery(query, { skip, limit }),
     summarizeCheckins(query),
-    Checkin.find(query)
-      .select("text sentiment stress emotion risk createdAt")
-      .sort({ createdAt: -1 })
-      .limit(20)
-      .lean(),
-    Checkin.find(calendarQuery).select("sentiment stress emotion risk createdAt").sort({ createdAt: 1 }).lean(),
+    repo.findTrendByQuery(query, 20),
+    repo.findCalendarByQuery(calendarQuery),
   ]);
 
   const totalPages = Math.max(Math.ceil(total / limit), 1);

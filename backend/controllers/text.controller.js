@@ -1,7 +1,5 @@
 const { getDBStatus } = require("../config/db");
 const { SERVER_BOOTED_AT, SERVER_SESSION_ID } = require("../config/server-info");
-const { MAX_CHECKIN_TEXT_LENGTH } = require("../constants");
-const { createHttpError } = require("../middleware/error-handler");
 const { analyzeText, MODEL_INFO: TEXT_MODEL_INFO } = require("../text-analysis-service");
 
 function getTextHealth(req, res) {
@@ -19,15 +17,6 @@ function getTextHealth(req, res) {
 
 async function analyzeTextRequest(req, res) {
   const text = String(req.body.text || "");
-
-  if (text.length > MAX_CHECKIN_TEXT_LENGTH) {
-    throw createHttpError(
-      400,
-      "Text too long",
-      `Check-in text must be ${MAX_CHECKIN_TEXT_LENGTH} characters or fewer.`
-    );
-  }
-
   const result = await analyzeText(text);
   res.status(200).json(result);
 }
