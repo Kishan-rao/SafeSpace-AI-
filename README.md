@@ -1,81 +1,159 @@
 # SafeSpace.ai
 
-SafeSpace.ai is a full-stack mental well-being prototype. It combines written emotional check-ins, optional webcam-based facial expression signals, mood tracking, saved check-in history, and calming recommendations.
+SafeSpace.ai is a privacy-conscious, multi-modal emotional interpretation platform and wellness dashboard. It combines written emotional check-ins, optional webcam-based facial expression signals, mood tracking, saved check-in history, supportive recommendations, and a deterministic crisis safety net.
 
-The app is built with a Node.js/Express backend, MongoDB persistence through Mongoose, and a vanilla HTML/CSS/JavaScript frontend.
+The application is built with a Node.js/Express backend using a clean **Controller-Service-Repository-Provider** architecture, MongoDB persistence via Mongoose, Zod request & environment validation, Groq LLM integration with safe fallback paths, Pino structured logging, and a responsive vanilla HTML/CSS/JavaScript frontend.
 
-## Features
+---
 
-- Emotion check-in textarea for written mood updates
-- Backend text analysis for dominant emotion, sentiment, stress, risk, support mode, safety guidance, and recommendations
-- Optional webcam expression capture using browser camera access and `face-api.js`
-- Expression confidence map with browser detection and backend normalization
-- Account registration, login, logout, and token-based sessions
-- MongoDB-backed saved check-ins per signed-in user
-- Sentiment trend chart for recent check-ins
-- Account dashboard summary with total entries, average mood, average stress, and most common emotion
-- Standalone monthly mood calendar with day-level summaries
-- Separate Mood Check-in section for filtered history cards
-- Personalized calming recommendation cards
-- Breathing exercise panel
-- Consistent backend JSON error handling with request IDs
-- Rate limiting for API, auth, and analysis endpoints
+## 🏛️ System Architecture
 
-## Tech Stack
+```mermaid
+flowchart TD
+    Client["🌐 Browser Frontend (HTML / CSS / JS)"]
+    
+    subgraph ExpressServer["Express.js Server (server.js)"]
+        ReqCtx["middleware/request-context.js\n(Generate & track X-Request-Id)"]
+        HelmetCors["Helmet & CORS & Morgan"]
+        RateLimit["config/rate-limiters.js\n(In-Memory Rate Limiting)"]
+        Routes["routes/ (API Routing Layer)"]
+        ZodVal["middleware/validate.js\n(Zod Schema Validation)"]
+        Controllers["controllers/ (HTTP Handling)"]
+    end
 
-- Backend: Node.js, Express 5
-- Database: MongoDB with Mongoose
-- Frontend: HTML, CSS, vanilla JavaScript
-- Middleware: Helmet, CORS, Morgan, custom request context, custom rate limiter
-- Auth: Email/password accounts with backend-issued session tokens
-- Browser model: `@vladmandic/face-api` loaded from CDN for facial expression detection
+    subgraph ServiceLayer["Service Layer (Business Logic)"]
+        TextService["text-analysis-service.js\n(Pipeline Orchestration)"]
+        CheckinService["checkin-service.js\n(Calendar Math & Summaries)"]
+        AuthService["auth-service.js\n(Session & Password Hash)"]
+        ExprService["expression-service.js\n(Face Scores & Audit Log)"]
+        CrisisService["crisis-safety-service.js\n(Deterministic Safety Net)"]
+        HeuristicService["text-heuristic-validation.js\n(Local Confidence Layer)"]
+    end
 
-## Project Structure
+    subgraph DataAndProviders["Data Repositories & External Providers"]
+        CheckinRepo["repositories/checkin-repository.js\n(Encapsulated Mongoose Queries)"]
+        GroqProvider["providers/groq-provider.js\n(Groq LLM SDK + Retries + Timeouts)"]
+    end
 
-- `server.js` - Express server, middleware, static frontend serving, and API routes
-- `frontend/index.html` - app layout and UI structure
-- `frontend/styles.css` - responsive visual design
-- `frontend/app.js` - frontend state, API calls, charts, webcam flow, auth UI, and rendering
-- `backend/config/db.js` - MongoDB connection and database status helpers
-- `backend/models/User.js` - user account model
-- `backend/models/Session.js` - login session model
-- `backend/models/Checkin.js` - saved mood check-in model
-- `backend/auth-service.js` - account creation, login, logout, and session lookup
-- `backend/checkin-service.js` - saving, filtering, summarizing, and listing check-ins
-- `backend/text-analysis-service.js` - server-side text emotion/sentiment/stress/risk analysis
-- `backend/crisis-safety-service.js` - safety and crisis signal detection
-- `backend/expression-service.js` - expression score normalization, confidence scoring, and audit logging
-- `backend/middleware/error-handler.js` - centralized API error handling
-- `backend/middleware/rate-limit.js` - in-memory rate limiter
-- `backend/middleware/request-context.js` - request ID creation and response header support
-- `data/expression-audit.jsonl` - created automatically when expression captures are processed
+    subgraph ExternalServices["External Infrastructure"]
+        MongoDB[("MongoDB Database\n(Users, Sessions, Checkins)")]
+        GroqAPI["Groq Cloud API\n(Llama 3.3 70B Model)"]
+    end
 
-## Data Storage
+    Client -->|HTTP Requests| ReqCtx
+    ReqCtx --> HelmetCors --> RateLimit --> Routes
+    Routes --> ZodVal --> Controllers
+    
+    Controllers -->|Text Analysis| TextService
+    Controllers -->|CRUD Operations| CheckinService
+    Controllers -->|User Auth| AuthService
+    Controllers -->|Face Signals| ExprService
 
-Core application data is stored in MongoDB:
+    TextService -->|1. LLM Completion| GroqProvider
+    TextService -->|2. Heuristic Layer| HeuristicService
+    TextService -->|3. Safety Overrides| CrisisService
 
-- Users are stored through `backend/models/User.js`
-- Sessions are stored through `backend/models/Session.js`
-- Saved check-ins are stored through `backend/models/Checkin.js`
+    CheckinService --> CheckinRepo
+    GroqProvider -->|HTTPS JSON| GroqAPI
+    CheckinRepo -->|Mongoose Queries| MongoDB
+```
 
-The old `backend/data-store.js` JSON file helper still exists, but the main auth and check-in flow no longer uses flat JSON files. Expression captures may append audit entries to `data/expression-audit.jsonl`.
+---
 
-## Environment Variables
+## 🚀 Key Architectural Highlights
+
+* **Decoupled Layered Design**: Separates HTTP handling (`controllers/`), input validation (`validation/`), business logic (`services/`), database access (`repositories/`), and LLM execution (`providers/`).
+* **Zod Boundary & Boot Validation**: 
+  * Boot-time schema validation (`backend/config/env.js`) validates environment variables on startup and fails fast if invalid types are provided.
+  * Request validation middleware (`backend/middleware/validate.js`) rejects bad client payloads (malformed emails, text length exceeding 2000 chars) at the HTTP boundary.
+* **LLM Provider Abstraction (`LLMProvider`)**: Text analysis is isolated behind `groq-provider.js`. Groq SDK calls, network timeouts, transient retries (429/503), and system prompts are fully modular, allowing seamless provider swapping.
+* **Deterministic Crisis Safety Net**: Immediate detection of self-harm or severe distress signals (`crisis-safety-service.js`). Bypasses or overrides LLM output to enforce high-risk classifications and attach emergency guidance (e.g. Tele-MANAS helpline).
+* **Repository Pattern**: All `Checkin` Mongoose model interactions are contained in `backend/repositories/checkin-repository.js`, leaving `checkin-service.js` focused purely on business logic, pagination, and calendar range math.
+* **Structured Pino Logging**: Logs output structured JSON with `requestId` correlation, auto-formatting with `pino-pretty` in local development.
+
+---
+
+## 📦 Project Structure
+
+```text
+├── server.js                          # Express app initialization, middleware, static server
+├── package.json
+├── README.md
+├── frontend/
+│   ├── index.html                     # App layout and UI structure
+│   ├── styles.css                     # Responsive visual design system
+│   └── app.js                         # Frontend state, API calls, charts, webcam flow
+└── backend/
+    ├── config/
+    │   ├── env.js                     # Zod boot-time environment variable validation
+    │   ├── db.js                      # MongoDB connection management & health status
+    │   ├── rate-limiters.js           # API, auth, and analysis rate limiting configs
+    │   └── server-info.js             # Session & boot metadata
+    ├── controllers/
+    │   ├── auth.controller.js         # Register, login, logout, getMe handlers
+    │   ├── checkin.controller.js      # List check-ins, create check-in handlers
+    │   ├── text.controller.js         # Text analysis endpoint & text service health
+    │   ├── expression.controller.js   # Expression analysis endpoint & expression health
+    │   └── health.controller.js       # Live, ready, health, and metrics endpoints
+    ├── routes/
+    │   ├── index.js                   # API route aggregation
+    │   ├── auth.routes.js             # Auth endpoints (/api/auth/*)
+    │   ├── checkin.routes.js          # Check-in endpoints (/api/checkins)
+    │   ├── text.routes.js             # Text endpoints (/api/text/*)
+    │   ├── expression.routes.js       # Expression endpoints (/api/expression/*)
+    │   └── health.routes.js           # Health & metrics endpoints
+    ├── validation/
+    │   └── schemas.js                 # Zod schemas for request validation
+    ├── middleware/
+    │   ├── validate.js                # Zod request validation middleware
+    │   ├── error-handler.js           # Centralized API error handling
+    │   ├── rate-limit.js              # In-memory sliding window rate limiter
+    │   ├── request-context.js         # Request ID generation & X-Request-Id header
+    │   ├── require-auth.js            # Bearer token authentication guard
+    │   ├── require-db.js              # Database readiness guard
+    │   └── require-internal-access.js # Restricted metrics access guard
+    ├── repositories/
+    │   └── checkin-repository.js      # Encapsulated Mongoose queries for Checkin model
+    ├── providers/
+    │   ├── llm-provider.js            # JSDoc interface definition for LLM providers
+    │   └── groq-provider.js           # Groq LLM integration (SDK, retries, timeouts)
+    ├── utils/
+    │   ├── request-helpers.js         # IP extraction & bearer token parsing
+    │   └── request-logger.js          # Pino child logger with requestId correlation
+    ├── __tests__/                     # Automated test suite (Node.js test runner)
+    │   ├── crisis-safety-service.test.js
+    │   ├── text-heuristic-validation.test.js
+    │   ├── checkin-service.test.js
+    │   └── validation.test.js
+    ├── text-analysis-service.js       # Core text interpretation pipeline
+    ├── crisis-safety-service.js       # Crisis & safety threshold evaluation
+    ├── text-heuristic-validation.js   # Local heuristic confidence refinement
+    ├── checkin-service.js             # Check-in pagination, summaries, calendar math
+    ├── auth-service.js                # User creation, scrypt hashing, session tokens
+    ├── expression-service.js          # Expression score normalization & audit logging
+    ├── logger.js                      # Pino logger instance
+    └── models/                        # Mongoose schemas (User, Session, Checkin)
+```
+
+---
+
+## ⚙️ Environment Variables
 
 Create a `.env` file in the project root:
 
 ```env
 PORT=3000
-MONGODB_URI=your_mongodb_connection_string
+NODE_ENV=development
+MONGODB_URI=mongodb://localhost:27017/safespace
+GROQ_API_KEY=your_groq_api_key_here
 ```
 
-Optional configuration:
+### Optional Configuration
 
 ```env
-NODE_ENV=development
-TRUST_PROXY=false
+GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_TIMEOUT_MS=15000
 MONGODB_CONNECT_TIMEOUT_MS=5000
-MONGODB_SERVER_SELECTION_TIMEOUT_MS=5000
 MONGODB_MAX_POOL_SIZE=20
 MONGODB_MIN_POOL_SIZE=0
 API_RATE_LIMIT_WINDOW_MS=60000
@@ -84,117 +162,66 @@ AUTH_RATE_LIMIT_WINDOW_MS=900000
 AUTH_RATE_LIMIT_MAX=20
 ANALYSIS_RATE_LIMIT_WINDOW_MS=60000
 ANALYSIS_RATE_LIMIT_MAX=60
+LOG_LEVEL=info
+ALLOWED_ORIGINS=http://localhost:3000
 ```
 
-## How To Run
+*Note: `MONGODB_URI` and `GROQ_API_KEY` are optional. The server supports **degraded mode**—if MongoDB is unavailable or `GROQ_API_KEY` is omitted, the app will still boot and serve public endpoints or return safe heuristic fallback responses.*
 
-Install dependencies:
+---
+
+## 🛠️ How To Run & Test
+
+### Installation
 
 ```bash
 npm install
 ```
 
-Start the app:
+### Running the App
 
 ```bash
 npm start
 ```
 
-Open:
+Open `http://localhost:3000` in your web browser.
 
-```text
-http://localhost:3000
+### Running Automated Tests
+
+Run the automated test suite powered by the Node.js native test runner:
+
+```bash
+npm test
 ```
 
-MongoDB is required for account and saved check-in features. If MongoDB is unavailable, public analysis endpoints can still work, but auth and persistence endpoints return database-unavailable errors.
+---
 
-## Main API Endpoints
+## 🔌 API Endpoints Summary
 
-Health and diagnostics:
+### Health & Diagnostics
+* `GET /api/live` — Liveness check
+* `GET /api/ready` — Readiness check (DB connection check)
+* `GET /api/health` — Full health status
+* `GET /api/metrics` — Server metrics (Restricted access)
+* `GET /api/text/health` — Text service health & LLM model metadata
+* `GET /api/expression/health` — Expression service health
 
-- `GET /api/live`
-- `GET /api/ready`
-- `GET /api/health`
-- `GET /api/metrics`
-- `GET /api/text/health`
-- `GET /api/expression/health`
+### Analysis
+* `POST /api/text/analyze` — Analyze emotional check-in text
+* `POST /api/expression/analyze` — Process facial expression signals
 
-Analysis:
+### Authentication
+* `POST /api/auth/register` — Register a new account
+* `POST /api/auth/login` — Log in and obtain session token
+* `GET /api/auth/me` — Fetch current user details
+* `POST /api/auth/logout` — Invalidate session token
 
-- `POST /api/text/analyze`
-- `POST /api/expression/analyze`
+### Check-ins (Authenticated)
+* `GET /api/checkins` — List user check-ins (supports pagination, filtering & month calendar)
+* `POST /api/checkins` — Save a new check-in entry
 
-Auth:
+---
 
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `GET /api/auth/me`
-- `POST /api/auth/logout`
+## ⚠️ Responsible AI Note
 
-Check-ins:
-
-- `GET /api/checkins`
-- `POST /api/checkins`
-
-## Frontend Flow
-
-1. A user enters a written check-in.
-2. The frontend sends text to `POST /api/text/analyze`.
-3. The backend returns emotion, sentiment, stress, risk, support mode, recommendations, and safety guidance.
-4. If signed in, the frontend saves the result to `POST /api/checkins`.
-5. The dashboard renders recent trends, calendar summaries, and filtered Mood Check-in history.
-6. Webcam capture can add expression context through `POST /api/expression/analyze`.
-
-## Mood Calendar And History
-
-The account dashboard includes a standalone monthly mood calendar. It only displays day-level mood summaries.
-
-The saved check-in cards live in a separate top-level Mood Check-in section. The history list stays blank until an emotion or risk filter is selected, then displays matching records in a scrollable list. Each card shows:
-
-- emotion label
-- date and time
-- user's message
-- sentiment score
-- stress score
-- support type
-- expression status
-
-## Error Handling
-
-The backend uses centralized error handling in `backend/middleware/error-handler.js`.
-
-API errors return a consistent JSON shape:
-
-```json
-{
-  "ok": false,
-  "error": "Error title",
-  "detail": "Human-readable detail",
-  "requestId": "request-id"
-}
-```
-
-Handled cases include:
-
-- malformed JSON
-- payload too large
-- validation errors
-- missing API routes
-- database unavailable states
-- rate limits
-- unexpected server errors
-
-The frontend wraps API failures in `ApiError` and displays friendlier user-facing messages for auth, text analysis, check-in loading, and save failures.
-
-## Responsible AI Note
-
-This prototype is for emotional support and early awareness only. It is not a medical device and does not provide diagnosis. The crisis/safety logic is a support signal layer and should be reviewed by qualified professionals before any real-world deployment.
-
-## Good Upgrade Points
-
-- Replace heuristic text analysis with a trained NLP model or external AI service
-- Replace browser/demo facial fallback with a production-grade vision pipeline
-- Add stronger password/session controls for production
-- Add automated tests for services, routes, and frontend state transitions
-- Add clinician-reviewed copy for high-risk safety flows
-- Move expression audit logs to structured database storage if needed
+This application is designed for emotional support, self-reflection, and early awareness only. It is **not** a medical device, clinical diagnostic tool, or substitute for professional healthcare. The safety layer includes automated routing to crisis resources (such as **Tele-MANAS** 14416 in India); however, high-risk safety features should undergo clinical review prior to real-world deployment.
